@@ -19,5 +19,9 @@ proc-macro2 = "1.0"
 case = "^1.0"
 reqwest = "0.10"
 
+[dev-dependencies]
+anyhow = "1.0.43"
+clap = "2.33.3"
+
 [workspace]
 members = [ "savon-test" ]
