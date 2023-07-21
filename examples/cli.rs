@@ -2,6 +2,8 @@ use anyhow::Context;
 use clap::{App, Arg};
 
 fn main() -> anyhow::Result<()> {
+    env_logger::init();
+
     let matches = App::new("Savon CLI")
         .args(&[
             Arg::with_name("input")
@@ -28,7 +30,7 @@ fn main() -> anyhow::Result<()> {
     let mut output: Box<dyn std::io::Write> = match output {
         Some("-") | None => Box::new(std::io::BufWriter::new(std::io::stdout())),
         Some(file) => Box::new(std::io::BufWriter::new(
-            std::fs::File::open(file).context("Failed to open output file")?,
+            std::fs::File::create(file).context("Failed to open output file")?,
         )),
     };
 

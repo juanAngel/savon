@@ -115,7 +115,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<String, GenError> {
         .iter()
         .map(|(name, t)| {
             if let Type::Complex(c) = t {
-                let type_name = Ident::new(&name.to_camel(), Span::call_site());
+                let type_name = Ident::new(&name.1.to_camel(), Span::call_site());
 
                 let fields = c
                     .fields
@@ -127,7 +127,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<String, GenError> {
                             SimpleType::String => Ident::new("String", Span::call_site()),
                             SimpleType::Float => Ident::new("f64", Span::call_site()),
                             SimpleType::Int => Ident::new("i64", Span::call_site()),
-                            SimpleType::DateTime => Ident::new("chrono::DateTime", Span::call_site()),
+                            SimpleType::DateTime => Ident::new("String", Span::call_site()), // FIXME: Use `::chrono::DateTime` instead.
                             SimpleType::Complex(s) => Ident::new(&s.to_camel(), Span::call_site()),
                         };
 
