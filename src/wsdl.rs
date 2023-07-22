@@ -145,6 +145,17 @@ fn parse_element(field: &Element) -> Result<(TypeAttribute, SimpleType), WsdlErr
             n.parse().expect("occurence should be a number"),
         )),
     };
+
+    // Filter for redundant combinations.
+    let (nillable, min_occurs, max_occurs) = match (nillable, min_occurs, max_occurs) {
+        // Commonly seen, no reason for min=1 and max=1 to be explicitly specified.
+        (false, Some(Occurence::Num(1)), Some(Occurence::Num(1))) => (false, None, None),
+        // min=0 and max=1 just means this value is nillable.
+        (false, Some(Occurence::Num(0)), Some(Occurence::Num(1))) => (true, None, None),
+        // Pass on through the attributes.
+        (nillable, min_occurs, max_occurs) => (nillable, min_occurs, max_occurs),
+    };
+
     trace!("field {:?} -> {:?}", field_name, field_type);
     let type_attributes = TypeAttribute {
         nillable,
