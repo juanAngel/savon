@@ -39,7 +39,7 @@ pub enum SimpleType {
     Float,
     Int,
     DateTime,
-    Complex(String),
+    Complex(QualifiedTypename),
 }
 
 #[derive(Debug, Clone)]
@@ -62,7 +62,17 @@ pub struct ComplexType {
 
 /// A fully qualified type name, consisting of a namespace and type name
 #[derive(Debug, Hash, Clone, PartialEq, Eq)]
-pub struct QualifiedTypename(pub String, pub String);
+pub struct QualifiedTypename(String, String);
+
+impl QualifiedTypename {
+    fn as_tuple(&self) -> (&str, &str) {
+        (&self.0, &self.1)
+    }
+
+    pub fn name(&self) -> &str {
+        &self.1
+    }
+}
 
 impl FromStr for QualifiedTypename {
     type Err = Box<dyn std::error::Error>;
@@ -73,6 +83,12 @@ impl FromStr for QualifiedTypename {
         let namespace = parts.next().ok_or("invalid qualified name")?.to_owned();
         let name = parts.next().ok_or("invalid qualified name")?.to_owned();
         Ok(Self(namespace, name))
+    }
+}
+
+impl std::fmt::Display for QualifiedTypename {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_fmt(format_args!("{}:{}", self.0, self.1))
     }
 }
 
@@ -116,7 +132,10 @@ fn qualified_type(s: &str, namespaces: &xmltree::Namespace, default_ns: &str) ->
     }
 }
 
-fn parse_element(field: &Element) -> Result<(TypeAttribute, SimpleType), WsdlError> {
+fn parse_element(
+    field: &Element,
+    target_namespace: &str,
+) -> Result<(TypeAttribute, SimpleType), WsdlError> {
     let field_name = field
         .attributes
         .get("name")
@@ -152,6 +171,10 @@ fn parse_element(field: &Element) -> Result<(TypeAttribute, SimpleType), WsdlErr
         (false, Some(Occurence::Num(1)), Some(Occurence::Num(1))) => (false, None, None),
         // min=0 and max=1 just means this value is nillable.
         (false, Some(Occurence::Num(0)), Some(Occurence::Num(1))) => (true, None, None),
+        // No need to be nillable _and_ a Vec
+        (true, Some(Occurence::Num(0)), Some(Occurence::Unbounded)) => {
+            (false, Some(Occurence::Num(0)), Some(Occurence::Unbounded))
+        }
         // Pass on through the attributes.
         (nillable, min_occurs, max_occurs) => (nillable, min_occurs, max_occurs),
     };
@@ -163,13 +186,19 @@ fn parse_element(field: &Element) -> Result<(TypeAttribute, SimpleType), WsdlErr
         max_occurs,
     };
 
-    let simple_type = match split_namespace(field_type.as_str()) {
-        "boolean" => SimpleType::Boolean,
-        "string" => SimpleType::String,
-        "int" => SimpleType::Int,
-        "float" => SimpleType::Float,
-        "dateTime" => SimpleType::DateTime,
-        s => SimpleType::Complex(s.to_string()),
+    let simple_type = match qualified_type(
+        field_type.as_str(),
+        field.namespaces.as_ref().unwrap(),
+        target_namespace,
+    )
+    .as_tuple()
+    {
+        ("http://www.w3.org/2001/XMLSchema", "boolean") => SimpleType::Boolean,
+        ("http://www.w3.org/2001/XMLSchema", "string") => SimpleType::String,
+        ("http://www.w3.org/2001/XMLSchema", "int") => SimpleType::Int,
+        ("http://www.w3.org/2001/XMLSchema", "float") => SimpleType::Float,
+        ("http://www.w3.org/2001/XMLSchema", "dateTime") => SimpleType::DateTime,
+        (n, s) => SimpleType::Complex(QualifiedTypename(n.to_string(), s.to_string())),
     };
 
     Ok((type_attributes, simple_type))
@@ -186,7 +215,7 @@ fn parse_simple_type(el: &Element) -> Result<Type, WsdlError> {
     Ok(Type::Simple(SimpleType::String))
 }
 
-fn parse_complex_type(el: &Element) -> Result<Type, WsdlError> {
+fn parse_complex_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlError> {
     let mut fields = HashMap::new();
     for child in el.children.iter() {
         let child = child.as_element().ok_or(WsdlError::NotAnElement)?;
@@ -200,7 +229,7 @@ fn parse_complex_type(el: &Element) -> Result<Type, WsdlError> {
                         .get("name")
                         .ok_or(WsdlError::AttributeNotFound("name"))?;
 
-                    let field = parse_element(field)?;
+                    let field = parse_element(field, target_namespace)?;
                     fields.insert(field_name.to_string(), field);
                 }
             }
@@ -262,7 +291,7 @@ fn parse_schema(
             .ok_or(WsdlError::AttributeNotFound("name"))?;
 
         let new_type = match inner_type.name.as_str() {
-            "complexType" => parse_complex_type(&inner_type)?,
+            "complexType" => parse_complex_type(&inner_type, target_namespace)?,
             "simpleType" => continue,
             n => unimplemented!("unhandled type {n}"),
         };
