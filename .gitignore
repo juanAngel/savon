@@ -1,2 +1,7 @@
-/target
-Cargo.lock
+*
+!/assets
+!/examples
+!/savon-test
+!/src
+!/Cargo.toml
+!/README.md
