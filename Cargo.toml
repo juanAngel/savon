@@ -17,7 +17,7 @@ chrono = "0.4"
 quote = "1.0"
 proc-macro2 = "1.0"
 case = "^1.0"
-reqwest = "0.10"
+reqwest = "0.11"
 thiserror = "1.0.44"
 prettyplease = "0.2.12"
 syn = "2.0.27"
@@ -28,4 +28,4 @@ clap = "2.33.3"
 env_logger = "0.10.0"
 
 [workspace]
-members = [ "savon-test" ]
+members = [ "savon-test", "xtask" ]
