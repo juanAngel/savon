@@ -133,6 +133,26 @@ fn qualified_type(s: &str, namespaces: &xmltree::Namespace, default_ns: &str) ->
     }
 }
 
+fn parse_type_ref(name: &QualifiedTypename) -> SimpleType {
+    match name.as_tuple() {
+        ("http://www.w3.org/2001/XMLSchema", "boolean") => SimpleType::Boolean,
+        ("http://www.w3.org/2001/XMLSchema", "string") => SimpleType::String,
+        ("http://www.w3.org/2001/XMLSchema", "int") => SimpleType::Int,
+        ("http://www.w3.org/2001/XMLSchema", "float") => SimpleType::Float,
+        ("http://www.w3.org/2001/XMLSchema", "dateTime") => SimpleType::DateTime,
+        ("http://www.w3.org/2001/XMLSchema", "base64Binary") => SimpleType::Base64Binary,
+        ("http://www.w3.org/2001/XMLSchema", t) => {
+            warn!("unhandled simple type: {t}");
+
+            SimpleType::Complex(QualifiedTypename(
+                "http://www.w3.org/2001/XMLSchema".to_string(),
+                t.to_string(),
+            ))
+        }
+        (n, s) => SimpleType::Complex(QualifiedTypename(n.to_string(), s.to_string())),
+    }
+}
+
 fn parse_element(
     field: &Element,
     target_namespace: &str,
@@ -173,7 +193,7 @@ fn parse_element(
         // min=0 and max=1 just means this value is nillable.
         (false, Some(Occurence::Num(0)), Some(Occurence::Num(1))) => (true, None, None),
         // No need to be nillable _and_ a Vec
-        (true, Some(Occurence::Num(0)), Some(Occurence::Unbounded)) => {
+        (true, Some(Occurence::Num(0 | 1)), Some(Occurence::Unbounded)) => {
             (false, Some(Occurence::Num(0)), Some(Occurence::Unbounded))
         }
         // Pass on through the attributes.
@@ -187,44 +207,55 @@ fn parse_element(
         max_occurs,
     };
 
-    let simple_type = match qualified_type(
+    let simple_type = parse_type_ref(&qualified_type(
         field_type.as_str(),
         field.namespaces.as_ref().unwrap(),
         target_namespace,
-    )
-    .as_tuple()
-    {
-        ("http://www.w3.org/2001/XMLSchema", "boolean") => SimpleType::Boolean,
-        ("http://www.w3.org/2001/XMLSchema", "string") => SimpleType::String,
-        ("http://www.w3.org/2001/XMLSchema", "int") => SimpleType::Int,
-        ("http://www.w3.org/2001/XMLSchema", "float") => SimpleType::Float,
-        ("http://www.w3.org/2001/XMLSchema", "dateTime") => SimpleType::DateTime,
-        ("http://www.w3.org/2001/XMLSchema", "base64Binary") => SimpleType::Base64Binary,
-        ("http://www.w3.org/2001/XMLSchema", t) => {
-            warn!("unhandled simple type: {t}");
-            
-            SimpleType::Complex(QualifiedTypename(
-                "http://www.w3.org/2001/XMLSchema".to_string(),
-                t.to_string(),
-            ))
-        }
-        (n, s) => SimpleType::Complex(QualifiedTypename(n.to_string(), s.to_string())),
-    };
+    ));
 
     Ok((type_attributes, simple_type))
 }
 
-fn parse_simple_type(el: &Element) -> Result<Type, WsdlError> {
+/// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256050(v=vs.100)
+fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlError> {
+    // Simply type inner may only be one of:
+    // - restriction
+    // - list
+    // - union
+
     // <s:simpleType name="guid">
     //   <s:restriction base="s:string">
     //     <s:pattern value="[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}" />
     //   </s:restriction>
     // </s:simpleType>
 
-    // HACK: Actually implement this
-    Ok(Type::Simple(SimpleType::String))
+    let inner = el.children[0].as_element().ok_or(WsdlError::NotAnElement)?;
+    let base = match inner.name.as_str() {
+        "restriction" => {
+            // Extends a base type with certain restrictions.
+            for _child in inner.children.iter().filter_map(|c| c.as_element()) {
+                // https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256057(v=vs.100)
+                // TODO: Parse these...
+            }
+
+            let base_type = inner
+                .attributes
+                .get("base")
+                .ok_or(WsdlError::AttributeNotFound("base"))?;
+
+            parse_type_ref(&qualified_type(
+                &base_type,
+                el.namespaces.as_ref().unwrap(),
+                target_namespace,
+            ))
+        }
+        n => panic!("unhandled simpleType inner: {n}"),
+    };
+
+    Ok(Type::Simple(base))
 }
 
+/// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256067(v=vs.100)
 fn parse_complex_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlError> {
     let mut fields = HashMap::new();
     for child in el.children.iter() {
@@ -302,7 +333,7 @@ fn parse_schema(
 
         let new_type = match inner_type.name.as_str() {
             "complexType" => parse_complex_type(&inner_type, target_namespace)?,
-            "simpleType" => continue,
+            "simpleType" => parse_simple_type(&inner_type, target_namespace)?,
             n => unimplemented!("unhandled type {n}"),
         };
 

@@ -43,125 +43,130 @@ impl From<std::io::Error> for GenError {
     }
 }
 
+fn gen_simple(ty: &SimpleType) -> Ident {
+    match ty {
+        SimpleType::Boolean => Ident::new("bool", Span::call_site()),
+        SimpleType::String => Ident::new("String", Span::call_site()),
+        SimpleType::Float => Ident::new("f64", Span::call_site()),
+        SimpleType::Int => Ident::new("i64", Span::call_site()),
+        SimpleType::DateTime => Ident::new("String", Span::call_site()), // FIXME: Use `::chrono::DateTime` instead.
+        SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
+        SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
+    }
+}
+
 fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
-    if let Type::Complex(c) = t {
-        let type_name = Ident::new(&name.name().to_camel(), Span::call_site());
+    let type_name = Ident::new(&name.name().to_camel(), Span::call_site());
 
-        let fields = c
-            .fields
-            .iter()
-            .map(|(field_name, (attributes, field_type))| {
-                let tgt = if let SimpleType::Complex(n) = field_type {
-                    Some(n.clone())
-                } else {
-                    None
-                };
-
-                let fname = Ident::new(&field_name.to_snake(), Span::call_site());
-                let ft = match field_type {
-                    SimpleType::Boolean => Ident::new("bool", Span::call_site()),
-                    SimpleType::String => Ident::new("String", Span::call_site()),
-                    SimpleType::Float => Ident::new("f64", Span::call_site()),
-                    SimpleType::Int => Ident::new("i64", Span::call_site()),
-                    SimpleType::DateTime => Ident::new("String", Span::call_site()), // FIXME: Use `::chrono::DateTime` instead.
-                    SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
-                    SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
-                };
-
-                let ft = match (
-                    attributes.min_occurs.as_ref(),
-                    attributes.max_occurs.as_ref(),
-                ) {
-                    (Some(_), Some(_)) => quote! { Vec<#ft> },
-                    _ => quote! { #ft },
-                };
-                let ft = if attributes.nillable {
-                    quote! { Option<#ft> }
-                } else {
-                    ft
-                };
-
-                let docstr = format!(
-                    "{}",
-                    if let Some(tgt) = tgt {
-                        format!(" Qualified type: {tgt}")
+    match t {
+        Type::Complex(c) => {
+            let fields = c
+                .fields
+                .iter()
+                .map(|(field_name, (attributes, field_type))| {
+                    let tgt = if let SimpleType::Complex(n) = field_type {
+                        Some(n.clone())
                     } else {
-                        format!("")
-                    }
-                );
+                        None
+                    };
 
-                quote! {
-                    #[doc = #docstr]
-                    pub #fname: #ft,
-                }
-            })
-            .collect::<Vec<_>>();
+                    let fname = Ident::new(&field_name.to_snake(), Span::call_site());
+                    let ft = gen_simple(field_type);
 
-        let fields_serialize_impl = c
-            .fields
-            .iter()
-            .map(|(field_name, (attributes, field_type))| {
-                let fname = Ident::new(&field_name.to_snake(), Span::call_site());
-                //FIXME: handle more complex types
-                /*let ft = match field_type {
-                    SimpleType::Boolean => Ident::new("bool", Span::call_site()),
-                    SimpleType::String => Ident::new("String", Span::call_site()),
-                    SimpleType::Float => Ident::new("f64", Span::call_site()),
-                    SimpleType::Int => Ident::new("i64", Span::call_site()),
-                    SimpleType::DateTime => Ident::new("String", Span::call_site()),
-                    SimpleType::Complex(s) => Ident::new(&s, Span::call_site()),
-                };*/
-                let ftype = Literal::string(field_name);
-                let prefix = quote! { xmltree::Element::node(#ftype) };
+                    let ft = match (
+                        attributes.min_occurs.as_ref(),
+                        attributes.max_occurs.as_ref(),
+                    ) {
+                        (Some(_), Some(_)) => quote! { Vec<#ft> },
+                        _ => quote! { #ft },
+                    };
+                    let ft = if attributes.nillable {
+                        quote! { Option<#ft> }
+                    } else {
+                        ft
+                    };
 
-                match (
-                    attributes.min_occurs.as_ref(),
-                    attributes.max_occurs.as_ref(),
-                ) {
-                    (Some(_), Some(_)) => {
-                        if attributes.nillable {
-                            quote! {
-                                self.#fname.as_ref().map(|v| v.iter().map(|i| {
-                                    #prefix.with_children(i.to_elements())
-                                }).collect()).unwrap_or_else(Vec::new)
-                            }
+                    let docstr = format!(
+                        "{}",
+                        if let Some(tgt) = tgt {
+                            format!(" Qualified type: {tgt}")
                         } else {
-                            quote! {
-                                self.#fname.iter().map(|i| {
-                                    #prefix.with_children(i.to_elements())
-                                }).collect()
+                            format!("")
+                        }
+                    );
+
+                    quote! {
+                        #[doc = #docstr]
+                        pub #fname: #ft,
+                    }
+                })
+                .collect::<Vec<_>>();
+
+            let fields_serialize_impl = c
+                .fields
+                .iter()
+                .map(|(field_name, (attributes, field_type))| {
+                    let fname = Ident::new(&field_name.to_snake(), Span::call_site());
+                    //FIXME: handle more complex types
+                    /*let ft = match field_type {
+                        SimpleType::Boolean => Ident::new("bool", Span::call_site()),
+                        SimpleType::String => Ident::new("String", Span::call_site()),
+                        SimpleType::Float => Ident::new("f64", Span::call_site()),
+                        SimpleType::Int => Ident::new("i64", Span::call_site()),
+                        SimpleType::DateTime => Ident::new("String", Span::call_site()),
+                        SimpleType::Complex(s) => Ident::new(&s, Span::call_site()),
+                    };*/
+                    let ftype = Literal::string(field_name);
+                    let prefix = quote! { xmltree::Element::node(#ftype) };
+
+                    match (
+                        attributes.min_occurs.as_ref(),
+                        attributes.max_occurs.as_ref(),
+                    ) {
+                        (Some(_), Some(_)) => {
+                            if attributes.nillable {
+                                quote! {
+                                    self.#fname.as_ref().map(|v| v.iter().map(|i| {
+                                        #prefix.with_children(i.to_elements())
+                                    }).collect()).unwrap_or_else(Vec::new)
+                                }
+                            } else {
+                                quote! {
+                                    self.#fname.iter().map(|i| {
+                                        #prefix.with_children(i.to_elements())
+                                    }).collect()
+                                }
                             }
                         }
+                        _ => match field_type {
+                            SimpleType::Complex(_s) => {
+                                quote! { vec![#prefix.with_children(self.#fname.to_elements())]}
+                            }
+                            _ => quote! { vec![#prefix.with_text(self.#fname.to_string())] },
+                        },
                     }
-                    _ => match field_type {
-                        SimpleType::Complex(_s) => {
-                            quote! { vec![#prefix.with_children(self.#fname.to_elements())]}
+                })
+                .collect::<Vec<_>>();
+
+            let serialize_impl = if fields_serialize_impl.is_empty() {
+                quote! {
+                    impl savon::gen::ToElements for #type_name {
+                        fn to_elements(&self) -> Vec<xmltree::Element> {
+                            vec![]
                         }
-                        _ => quote! { vec![#prefix.with_text(self.#fname.to_string())] },
-                    },
-                }
-            })
-            .collect::<Vec<_>>();
-
-        let serialize_impl = if fields_serialize_impl.is_empty() {
-            quote! {
-                impl savon::gen::ToElements for #type_name {
-                    fn to_elements(&self) -> Vec<xmltree::Element> {
-                        vec![]
                     }
                 }
-            }
-        } else {
-            quote! {
-                impl savon::gen::ToElements for #type_name {
-                    fn to_elements(&self) -> Vec<xmltree::Element> {
-                        vec![#(#fields_serialize_impl),*].drain(..).flatten().collect()
+            } else {
+                quote! {
+                    impl savon::gen::ToElements for #type_name {
+                        fn to_elements(&self) -> Vec<xmltree::Element> {
+                            vec![#(#fields_serialize_impl),*].drain(..).flatten().collect()
+                        }
                     }
                 }
-            }
-        };
+            };
 
-        let fields_deserialize_impl = c
+            let fields_deserialize_impl = c
             .fields
             .iter()
             .map(|(field_name, (attributes, field_type))| {
@@ -269,42 +274,56 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             })
             .collect::<Vec<_>>();
 
-        let deserialize_impl = if fields_deserialize_impl.is_empty() {
-            quote! {
-                impl savon::gen::FromElement for #type_name {
-                    fn from_element(_element: &xmltree::Element) -> Result<Self, savon::Error> {
-                        Ok(#type_name {
-                        })
+            let deserialize_impl = if fields_deserialize_impl.is_empty() {
+                quote! {
+                    impl savon::gen::FromElement for #type_name {
+                        fn from_element(_element: &xmltree::Element) -> Result<Self, savon::Error> {
+                            Ok(#type_name {
+                            })
+                        }
                     }
                 }
-            }
-        } else {
-            quote! {
-                impl savon::gen::FromElement for #type_name {
-                    fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
-                        Ok(#type_name {
-                            #(#fields_deserialize_impl)*
-                        })
+            } else {
+                quote! {
+                    impl savon::gen::FromElement for #type_name {
+                        fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
+                            Ok(#type_name {
+                                #(#fields_deserialize_impl)*
+                            })
+                        }
                     }
                 }
+            };
+
+            let docstr = format!(" Qualified type: {}", name);
+
+            quote! {
+                #[doc = #docstr]
+                #[derive(Clone, Debug, Default)]
+                pub struct #type_name {
+                    #(#fields)*
+                }
+
+                #serialize_impl
+
+                #deserialize_impl
             }
-        };
-
-        let docstr = format!(" Qualified type: {}", name);
-
-        quote! {
-            #[doc = #docstr]
-            #[derive(Clone, Debug, Default)]
-            pub struct #type_name {
-                #(#fields)*
-            }
-
-            #serialize_impl
-
-            #deserialize_impl
         }
-    } else {
-        panic!();
+        Type::Simple(t) => {
+            let ident = gen_simple(t);
+            let field = quote! { pub #ident };
+
+            // TODO: Serialize/deserialize impls
+
+            let docstr = format!(" Qualified type: {}", name);
+
+            quote! {
+                #[doc = #docstr]
+                #[derive(Clone, Debug, Default)]
+                pub struct #type_name( #field );
+            }
+        }
+        _ => panic!(),
     }
 }
 
