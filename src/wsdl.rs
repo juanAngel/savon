@@ -34,6 +34,7 @@ pub struct Wsdl {
 
 #[derive(Debug, Clone)]
 pub enum SimpleType {
+    Base64Binary,
     Boolean,
     String,
     Float,
@@ -198,6 +199,15 @@ fn parse_element(
         ("http://www.w3.org/2001/XMLSchema", "int") => SimpleType::Int,
         ("http://www.w3.org/2001/XMLSchema", "float") => SimpleType::Float,
         ("http://www.w3.org/2001/XMLSchema", "dateTime") => SimpleType::DateTime,
+        ("http://www.w3.org/2001/XMLSchema", "base64Binary") => SimpleType::Base64Binary,
+        ("http://www.w3.org/2001/XMLSchema", t) => {
+            warn!("unhandled simple type: {t}");
+            
+            SimpleType::Complex(QualifiedTypename(
+                "http://www.w3.org/2001/XMLSchema".to_string(),
+                t.to_string(),
+            ))
+        }
         (n, s) => SimpleType::Complex(QualifiedTypename(n.to_string(), s.to_string())),
     };
 

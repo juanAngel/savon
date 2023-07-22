@@ -38,9 +38,10 @@ fn main() -> anyhow::Result<()> {
     input.read_to_end(&mut data)?;
     let wsdl = savon::wsdl::parse(&data).unwrap();
     let gen = savon::gen::gen(&wsdl).unwrap();
+    let fmt = prettyplease::unparse(&syn::parse_quote!(#gen));
 
     output
-        .write_all(gen.as_bytes())
+        .write_all(fmt.as_bytes())
         .context("Failed to write output file")?;
 
     Ok(())

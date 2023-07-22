@@ -64,6 +64,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                     SimpleType::Float => Ident::new("f64", Span::call_site()),
                     SimpleType::Int => Ident::new("i64", Span::call_site()),
                     SimpleType::DateTime => Ident::new("String", Span::call_site()), // FIXME: Use `::chrono::DateTime` instead.
+                    SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
                     SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
                 };
 
@@ -83,7 +84,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 let docstr = format!(
                     "{}",
                     if let Some(tgt) = tgt {
-                        format!("{tgt}")
+                        format!(" Qualified type: {tgt}")
                     } else {
                         format!("")
                     }
@@ -170,6 +171,17 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 let prefix = quote!{ #fname: element.get_at_path(&[#ftype]) };
 
                 match field_type {
+                    SimpleType::Base64Binary => {
+                        // TODO: Properly parse this...
+                        let ft = quote!{ #prefix.and_then(|e| e.get_text().map(|s| s.to_string())
+                                              .ok_or(savon::rpser::xml::Error::Empty)
+                                              ) };
+                        if attributes.nillable {
+                            quote!{ #ft.ok(),}
+                        } else {
+                            quote!{ #ft?,}
+                        }
+                    }
                     SimpleType::Boolean => {
                         let ft = quote!{ #prefix.and_then(|e| e.as_boolean()) };
                         if attributes.nillable {
@@ -278,7 +290,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             }
         };
 
-        let docstr = format!("{}", name);
+        let docstr = format!(" Qualified type: {}", name);
 
         quote! {
             #[doc = #docstr]
@@ -301,14 +313,17 @@ pub fn gen_write(path: &str, out: &str) -> Result<(), ()> {
     let v = std::fs::read(path).unwrap();
     let mut output = File::create(out_path).unwrap();
     let wsdl = parse(&v[..]).unwrap();
+
     let generated = gen(&wsdl).unwrap();
-    output.write_all(generated.as_bytes()).unwrap();
+    let formatted = prettyplease::unparse(&syn::parse_quote!(#generated));
+
+    output.write_all(formatted.as_bytes()).unwrap();
     output.flush().unwrap();
 
     Ok(())
 }
 
-pub fn gen(wsdl: &Wsdl) -> Result<String, GenError> {
+pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
     let target_namespace = Literal::string(&wsdl.target_namespace);
 
     let operations = wsdl.operations.iter().map(|(name, operation)| {
@@ -460,7 +475,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<String, GenError> {
     let mut stream: TokenStream = toks;
     stream.extend(operation_faults);
 
-    Ok(stream.to_string())
+    Ok(stream)
 }
 
 #[cfg(test)]
