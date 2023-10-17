@@ -1,0 +1,27 @@
+[package]
+name = "savon"
+version = "0.1.0"
+authors = ["Geoffroy Couprie <contact@geoffroycouprie.com>"]
+edition = "2021"
+description = "reserved"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/netwo-io/savon"
+readme = "../README.md"
+documentation = "https://docs.rs/savon"
+keywords = ["soap"]
+
+[dependencies]
+log = "0.4"
+xmltree = "0.10"
+chrono = "0.4"
+quote = "1.0"
+proc-macro2 = "1.0"
+case = "^1.0"
+reqwest = "0.11"
+thiserror = "1.0"
+prettyplease = "0.2"
+syn = "2.0"
+
+[dev-dependencies]
+anyhow = "1.0"
+env_logger = "0.10"

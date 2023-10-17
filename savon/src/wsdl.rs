@@ -244,12 +244,12 @@ fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlE
                 .ok_or(WsdlError::AttributeNotFound("base"))?;
 
             parse_type_ref(&qualified_type(
-                &base_type,
+                base_type,
                 el.namespaces.as_ref().unwrap(),
                 target_namespace,
             ))
         }
-        n => panic!("unhandled simpleType inner: {n}"),
+        _n => panic!("unhandled simpleType inner: {_n}"),
     };
 
     Ok(Type::Simple(base))
@@ -332,8 +332,8 @@ fn parse_schema(
             .ok_or(WsdlError::AttributeNotFound("name"))?;
 
         let new_type = match inner_type.name.as_str() {
-            "complexType" => parse_complex_type(&inner_type, target_namespace)?,
-            "simpleType" => parse_simple_type(&inner_type, target_namespace)?,
+            "complexType" => parse_complex_type(inner_type, target_namespace)?,
+            "simpleType" => parse_simple_type(inner_type, target_namespace)?,
             n => unimplemented!("unhandled type {n}"),
         };
 
@@ -508,10 +508,11 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
-    const WIKIPEDIA_WSDL: &[u8] = include_bytes!("../assets/wikipedia-example.wsdl");
-    const EXAMPLE_WSDL: &[u8] = include_bytes!("../assets/example.wsdl");
+    const WIKIPEDIA_WSDL: &[u8] = include_bytes!("../../assets/wikipedia-example.wsdl");
+    const EXAMPLE_WSDL: &[u8] = include_bytes!("../../assets/example.wsdl");
 
     #[test]
     fn parse_example() {

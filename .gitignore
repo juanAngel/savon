@@ -1,9 +1,2 @@
-/*
-!/.cargo
-!/assets
-!/examples
-!/savon-test
-!/src
-!/xtask
-!/Cargo.toml
-!/README.md
+.idea
+**/target/

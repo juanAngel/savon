@@ -35,10 +35,9 @@ pub enum Error {
 ///
 /// ```rust
 /// extern crate xmltree;
-/// extern crate confluence;
 ///
 /// use xmltree::Element;
-/// use confluence::rpser::xml::BuildElement;
+/// use savon::rpser::xml::BuildElement;
 ///
 /// fn main() {
 ///     assert_eq!(
@@ -303,7 +302,7 @@ impl BuildElement for Element {
 fn get_typed_string(element: &Element, value_type: &str) -> Result<String, Error> {
     Ok(
         match (element.attributes.get("type"), &element.get_text()) {
-            (Some(value), &Some(ref text)) if value.ends_with(value_type) => text.to_string(),
+            (Some(value), Some(text)) if value.ends_with(value_type) => text.to_string(),
             (other_type, _) => {
                 return Err(Error::ExpectedElementWithType {
                     name: element.name.clone(),

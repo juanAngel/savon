@@ -49,7 +49,7 @@ fn gen_simple(ty: &SimpleType) -> Ident {
         SimpleType::String => Ident::new("String", Span::call_site()),
         SimpleType::Float => Ident::new("f64", Span::call_site()),
         SimpleType::Int => Ident::new("i64", Span::call_site()),
-        SimpleType::DateTime => Ident::new("String", Span::call_site()), // FIXME: Use `::chrono::DateTime` instead.
+        SimpleType::DateTime => Ident::new("String", Span::call_site()), // TODO: Use `::chrono::DateTime` instead.
         SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
         SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
     }
@@ -86,14 +86,11 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         ft
                     };
 
-                    let docstr = format!(
-                        "{}",
-                        if let Some(tgt) = tgt {
-                            format!(" Qualified type: {tgt}")
-                        } else {
-                            format!("")
-                        }
-                    );
+                    let docstr = if let Some(tgt) = tgt {
+                        format!(" Qualified type: {tgt}")
+                    } else {
+                        String::new()
+                    };
 
                     quote! {
                         #[doc = #docstr]
@@ -128,13 +125,13 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                                 quote! {
                                     self.#fname.as_ref().map(|v| v.iter().map(|i| {
                                         #prefix.with_children(i.to_elements())
-                                    }).collect()).unwrap_or_else(Vec::new)
+                                    }).collect::<Vec<_>>()).unwrap_or_else(Vec::new)
                                 }
                             } else {
                                 quote! {
                                     self.#fname.iter().map(|i| {
                                         #prefix.with_children(i.to_elements())
-                                    }).collect()
+                                    }).collect::<Vec<_>>()
                                 }
                             }
                         }
@@ -248,7 +245,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                                         let mut v = vec![];
                                         for elem in element.children.iter()
                                             .filter_map(|c| c.as_element()) {
-                                                v.push(#complex_type::from_element(&elem)?);
+                                                v.push(#complex_type::from_element(elem)?);
                                             }
                                         v
                                     },
@@ -327,7 +324,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
     }
 }
 
-pub fn gen_write(path: &str, out: &str) -> Result<(), ()> {
+pub fn gen_write(path: &str, out: &str) -> Result<(), crate::Error> {
     let out_path = format!("{}/example.rs", out);
     let v = std::fs::read(path).unwrap();
     let mut output = File::create(out_path).unwrap();
@@ -350,7 +347,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
         let input_name = Ident::new(&operation.input.as_ref().unwrap().to_snake(), Span::call_site());
         let input_type = Ident::new(&operation.input.as_ref().unwrap().to_camel(), Span::call_site());
 
-        let op_str = Literal::string(&name);
+        let op_str = Literal::string(name);
 
         match (operation.output.as_ref(), operation.faults.as_ref()) {
             (None, None) => {
@@ -362,7 +359,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
             },
             (None, Some(_)) => quote!{},
             (Some(out), None) => {
-                let out_name = Ident::new(&out, Span::call_site());
+                let out_name = Ident::new(out, Span::call_site());
 
                 quote! {
                     pub async fn #op_name(&self, #input_name: #input_type) -> Result<Result<#out_name, ()>, savon::Error> {
@@ -371,7 +368,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                 }
             },
             (Some(out), Some(_)) => {
-                let out_name = Ident::new(&out, Span::call_site());
+                let out_name = Ident::new(out, Span::call_site());
                 let err_name = Ident::new(&format!("{}Error", name.to_camel()), Span::call_site());
 
                 quote! {
@@ -407,7 +404,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
         .messages
         .iter()
         .map(|(message_name, message)| {
-            let mname = Ident::new(&message_name, Span::call_site());
+            let mname = Ident::new(message_name, Span::call_site());
             let iname = Ident::new(&message.part_element, Span::call_site());
 
             quote! {
@@ -474,7 +471,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                 .unwrap()
                 .iter()
                 .map(|fault| {
-                    let fault_name = Ident::new(&fault, Span::call_site());
+                    let fault_name = Ident::new(fault, Span::call_site());
 
                     quote! {
                           #fault_name(#fault_name),
@@ -498,11 +495,11 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
 }
 
 #[cfg(test)]
+#[allow(dead_code)]
 mod tests {
     use super::*;
-    const WIKIPEDIA_WSDL: &[u8] = include_bytes!("../assets/wikipedia-example.wsdl");
-    const EXAMPLE_WSDL: &[u8] = include_bytes!("../assets/example.wsdl");
-    use crate::wsdl::*;
+    const WIKIPEDIA_WSDL: &[u8] = include_bytes!("../../assets/wikipedia-example.wsdl");
+    const EXAMPLE_WSDL: &[u8] = include_bytes!("../../assets/example.wsdl");
 
     #[test]
     fn example() {
@@ -512,6 +509,5 @@ mod tests {
         let res = gen(&wsdl).unwrap();
 
         println!("generated:\n{}", res);
-        panic!();
     }
 }
