@@ -8,7 +8,6 @@ members = [
 ]
 
 [workspace.package]
-name = "savon"
 version = "0.1.0"
 authors = ["Geoffroy Couprie <contact@geoffroycouprie.com>", "Matthew Wilding <mbwilding@gmail.com>"]
 edition = "2021"
