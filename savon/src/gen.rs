@@ -1,3 +1,4 @@
+use crate::string;
 use crate::wsdl::{parse, QualifiedTypename, SimpleType, Type, Wsdl};
 use case::CaseExt;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
@@ -70,7 +71,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         None
                     };
 
-                    let fname = Ident::new(&field_name.to_snake(), Span::call_site());
+                    let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
                     let ft = gen_simple(field_type);
 
                     let ft = match (
@@ -103,7 +104,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 .fields
                 .iter()
                 .map(|(field_name, (attributes, field_type))| {
-                    let fname = Ident::new(&field_name.to_snake(), Span::call_site());
+                    let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
                     //FIXME: handle more complex types
                     /*let ft = match field_type {
                         SimpleType::Boolean => Ident::new("bool", Span::call_site()),
@@ -167,7 +168,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             .fields
             .iter()
             .map(|(field_name, (attributes, field_type))| {
-                let fname = Ident::new(&field_name.to_snake(), Span::call_site());
+                let fname = Ident::new(&&string::to_snake(field_name), Span::call_site());
                 let ftype = Literal::string(field_name);
 
                 let prefix = quote!{ #fname: element.get_at_path(&[#ftype]) };
@@ -343,8 +344,8 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
     let target_namespace = Literal::string(&wsdl.target_namespace);
 
     let operations = wsdl.operations.iter().map(|(name, operation)| {
-        let op_name = Ident::new(&name.to_snake(), Span::call_site());
-        let input_name = Ident::new(&operation.input.as_ref().unwrap().to_snake(), Span::call_site());
+        let op_name = Ident::new(&string::to_snake(name), Span::call_site());
+        let input_name = Ident::new(&string::to_snake(operation.input.as_ref().unwrap()), Span::call_site());
         let input_type = Ident::new(&operation.input.as_ref().unwrap().to_camel(), Span::call_site());
 
         let op_str = Literal::string(name);
