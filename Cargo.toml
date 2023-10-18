@@ -6,3 +6,15 @@ members = [
     "xtask",
     "savon-cli",
 ]
+
+[workspace.package]
+name = "savon"
+version = "0.1.0"
+authors = ["Geoffroy Couprie <contact@geoffroycouprie.com>", "Matthew Wilding <mbwilding@gmail.com>"]
+edition = "2021"
+description = "reserved"
+license = "MIT OR Apache-2.0"
+repository = "https://github.com/netwo-io/savon"
+readme = "README.md"
+documentation = "https://docs.rs/savon"
+keywords = ["soap"]
