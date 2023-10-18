@@ -1,4 +1,4 @@
-use anyhow::Context;
+use anyhow::{Context, Result};
 use clap::Parser;
 use std::path::Path;
 
@@ -14,7 +14,7 @@ pub struct Args {
     pub output: Option<String>,
 }
 
-fn main() -> anyhow::Result<()> {
+fn main() -> Result<()> {
     env_logger::init();
 
     let args = Args::parse();
@@ -29,7 +29,7 @@ fn main() -> anyhow::Result<()> {
     let output = if let Some(output) = args.output {
         output
     } else {
-        derive_output_filename_from_input(&args.input)
+        derive_output_filename_from_input(&args.input)?
     };
 
     let mut output: Box<dyn std::io::Write> = match &*output {
@@ -52,9 +52,24 @@ fn main() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn derive_output_filename_from_input(input: &str) -> String {
+fn derive_output_filename_from_input(input: &str) -> Result<String> {
+    // Create a Path from the input string
     let path = Path::new(input);
-    let stem = path.file_stem().unwrap_or_default();
-    let output_path = path.with_file_name(stem).with_extension("rs");
-    output_path.to_string_lossy().into_owned()
+
+    // Extract the file stem (filename without extension)
+    let stem = path
+        .file_stem()
+        .context("Failed to extract stem from input")?
+        .to_str()
+        .context("Failed to convert stem to str")?
+        .to_owned();
+
+    // Convert the stem to snake case
+    let file_name = savon::string::to_snake(&stem);
+
+    // Create the output path with the modified filename and ".rs" extension
+    let output_path = path.with_file_name(file_name).with_extension("rs");
+
+    // Convert the output path to a string and return
+    Ok(output_path.to_string_lossy().into_owned())
 }
