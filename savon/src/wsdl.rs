@@ -1,7 +1,7 @@
 //! WSDL inspection helpers.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::{BTreeMap, HashSet},
     str::FromStr,
 };
 use xmltree::Element;
@@ -27,9 +27,9 @@ pub struct Wsdl {
     pub name: String,
     pub target_namespace: String,
 
-    pub types: HashMap<QualifiedTypename, Type>,
-    pub messages: HashMap<String, Message>,
-    pub operations: HashMap<String, Operation>,
+    pub types: BTreeMap<QualifiedTypename, Type>,
+    pub messages: BTreeMap<String, Message>,
+    pub operations: BTreeMap<String, Operation>,
 }
 
 #[derive(Debug, Clone)]
@@ -58,11 +58,11 @@ pub struct TypeAttribute {
 
 #[derive(Debug, Clone)]
 pub struct ComplexType {
-    pub fields: HashMap<String, (TypeAttribute, SimpleType)>,
+    pub fields: BTreeMap<String, (TypeAttribute, SimpleType)>,
 }
 
 /// A fully qualified type name, consisting of a namespace and type name
-#[derive(Debug, Hash, Clone, PartialEq, Eq)]
+#[derive(Debug, Hash, Clone, PartialEq, Eq, PartialOrd, Ord)]
 pub struct QualifiedTypename(String, String);
 
 impl QualifiedTypename {
@@ -257,7 +257,7 @@ fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlE
 
 /// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256067(v=vs.100)
 fn parse_complex_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlError> {
-    let mut fields = HashMap::new();
+    let mut fields = BTreeMap::new();
     for child in el.children.iter() {
         let child = child.as_element().ok_or(WsdlError::NotAnElement)?;
 
@@ -287,8 +287,8 @@ fn parse_complex_type(el: &Element, target_namespace: &str) -> Result<Type, Wsdl
 fn parse_schema(
     schema: &Element,
     target_namespace: &str,
-) -> Result<(HashSet<String>, HashMap<QualifiedTypename, Type>), WsdlError> {
-    let mut types = HashMap::new();
+) -> Result<(HashSet<String>, BTreeMap<QualifiedTypename, Type>), WsdlError> {
+    let mut types = BTreeMap::new();
     let mut imports = HashSet::new();
 
     // Now parse individual types.
@@ -349,8 +349,8 @@ fn parse_schema(
 pub fn parse_types(
     root_el: &Element,
     target_namespace: &str,
-) -> Result<HashMap<QualifiedTypename, Type>, WsdlError> {
-    let mut types = HashMap::new();
+) -> Result<BTreeMap<QualifiedTypename, Type>, WsdlError> {
+    let mut types = BTreeMap::new();
 
     let schemas = root_el.children.iter().filter_map(|c| c.as_element());
     for schema in schemas {
@@ -370,8 +370,8 @@ pub fn parse_types(
 }
 
 pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
-    let mut messages = HashMap::new();
-    let mut operations = HashMap::new();
+    let mut messages = BTreeMap::new();
+    let mut operations = BTreeMap::new();
     let mut target_namespace = Vec::new();
 
     let elements = Element::parse(bytes)?;

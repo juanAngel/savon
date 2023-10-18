@@ -50,7 +50,7 @@ fn gen_simple(ty: &SimpleType) -> Ident {
         SimpleType::String => Ident::new("String", Span::call_site()),
         SimpleType::Float => Ident::new("f64", Span::call_site()),
         SimpleType::Int => Ident::new("i64", Span::call_site()),
-        SimpleType::DateTime => Ident::new("String", Span::call_site()), // TODO: Use `::chrono::DateTime` instead.
+        SimpleType::DateTime => Ident::new("chrono::DateTime", Span::call_site()),
         SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
         SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
     }
@@ -168,7 +168,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             .fields
             .iter()
             .map(|(field_name, (attributes, field_type))| {
-                let fname = Ident::new(&&string::to_snake(field_name), Span::call_site());
+                let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
                 let ftype = Literal::string(field_name);
 
                 let prefix = quote!{ #fname: element.get_at_path(&[#ftype]) };
@@ -371,6 +371,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
             (Some(out), Some(_)) => {
                 let out_name = Ident::new(out, Span::call_site());
                 let err_name = Ident::new(&format!("{}Error", name.to_camel()), Span::call_site());
+                let input_name = Ident::new(&string::to_snake(&format!("_{}", operation.input.as_ref().unwrap())), Span::call_site());
 
                 quote! {
                     pub async fn #op_name(&self, #input_name: #input_type) -> Result<Result<#out_name, #err_name>, savon::Error> {
@@ -431,6 +432,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
 
     let toks = quote! {
         use savon::internal::xmltree;
+        #[allow(unused_imports)]
         use savon::rpser::xml::*;
 
         #(#types)*
@@ -481,7 +483,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                 .collect::<Vec<_>>();
 
             quote! {
-                #[derive(Clone, Debug, Default)]
+                #[derive(Clone, Debug)]
                 pub enum #op_error {
                     #(#faults)*
                 }
