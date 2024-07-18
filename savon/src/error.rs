@@ -1,6 +1,8 @@
 #[derive(Debug)]
 pub enum Error {
     Wsdl(crate::wsdl::WsdlError),
+    Io(std::io::Error),
+    Gen(crate::gen::GenError),
     Reqwest(reqwest::Error),
     Rpser(crate::rpser::xml::Error),
     Num(std::num::ParseFloatError),

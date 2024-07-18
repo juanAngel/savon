@@ -36,6 +36,7 @@ impl<T: ToElements> ToElements for Option<T> {
 #[derive(Debug)]
 pub enum GenError {
     Io(std::io::Error),
+    OperationFieldRequired,
 }
 
 impl From<std::io::Error> for GenError {
@@ -327,15 +328,15 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
 pub fn gen_write(path: &str, out: &str) -> Result<(), crate::Error> {
     let out_path = format!("{}/example.rs", out);
-    let v = std::fs::read(path).unwrap();
-    let mut output = File::create(out_path).unwrap();
-    let wsdl = parse(&v[..]).unwrap();
+    let v = std::fs::read(path).map_err(|e|crate::Error::Io(e))?;
+    let mut output = File::create(out_path).map_err(|e|crate::Error::Io(e))?;
+    let wsdl = parse(&v[..]).map_err(|e|crate::Error::Wsdl(e))?;
 
-    let generated = gen(&wsdl).unwrap();
+    let generated = gen(&wsdl).map_err(|e|crate::Error::Gen(e.into()))?;
     let formatted = prettyplease::unparse(&syn::parse_quote!(#generated));
 
-    output.write_all(formatted.as_bytes()).unwrap();
-    output.flush().unwrap();
+    output.write_all(formatted.as_bytes()).map_err(|e|crate::Error::Io(e))?;
+    output.flush().map_err(|e|crate::Error::Io(e))?;
 
     Ok(())
 }
@@ -343,14 +344,20 @@ pub fn gen_write(path: &str, out: &str) -> Result<(), crate::Error> {
 pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
     let target_namespace = Literal::string(&wsdl.target_namespace);
 
-    let operations = wsdl.operations.iter().map(|(name, operation)| {
+    let operations = wsdl.operations.iter().flat_map(|(name, operation)| {
         let op_name = Ident::new(&string::to_snake(name), Span::call_site());
-        let input_name = Ident::new(&string::to_snake(operation.input.as_ref().unwrap()), Span::call_site());
-        let input_type = Ident::new(&operation.input.as_ref().unwrap().to_camel(), Span::call_site());
+        let input_name = match operation.input.as_ref(){
+            Some(v) => Ident::new(&string::to_snake(v), Span::call_site()),
+            None => return Err(GenError::OperationFieldRequired),
+        };
+        let input_type = match operation.input.as_ref(){
+            Some(v) => Ident::new(&v.to_camel(), Span::call_site()),
+            None => return Err(GenError::OperationFieldRequired),
+        };
 
         let op_str = Literal::string(name);
 
-        match (operation.output.as_ref(), operation.faults.as_ref()) {
+        Ok(match (operation.output.as_ref(), operation.faults.as_ref()) {
             (None, None) => {
                 quote! {
                     pub async fn #op_name(&self, #input_name: #input_type) -> Result<(), savon::Error> {
@@ -371,7 +378,10 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
             (Some(out), Some(_)) => {
                 let out_name = Ident::new(out, Span::call_site());
                 let err_name = Ident::new(&format!("{}Error", name.to_camel()), Span::call_site());
-                let input_name = Ident::new(&string::to_snake(&format!("_{}", operation.input.as_ref().unwrap())), Span::call_site());
+                let input_name = match operation.input.as_ref() {
+                    Some(v) => Ident::new(&string::to_snake(&format!("_{}", v)), Span::call_site()),
+                    None => return Err(GenError::OperationFieldRequired),
+                };
 
                 quote! {
                     pub async fn #op_name(&self, #input_name: #input_type) -> Result<Result<#out_name, #err_name>, savon::Error> {
@@ -393,7 +403,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                     }
                 }
             },
-        }
+        })
     }).collect::<Vec<_>>();
 
     let types = wsdl
@@ -465,13 +475,14 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
         .operations
         .iter()
         .filter(|(_, op)| op.faults.is_some())
-        .map(|(name, operation)| {
+        .flat_map(|(name, operation)| {
             let op_error = Ident::new(&format!("{}Error", name), Span::call_site());
 
-            let faults = operation
-                .faults
-                .as_ref()
-                .unwrap()
+            let faults = match operation
+                .faults.as_ref(){
+                    Some(v) => v,
+                    None => return Err(GenError::OperationFieldRequired)
+                }
                 .iter()
                 .map(|fault| {
                     let fault_name = Ident::new(fault, Span::call_site());
@@ -482,12 +493,12 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                 })
                 .collect::<Vec<_>>();
 
-            quote! {
+            Ok(quote! {
                 #[derive(Clone, Debug)]
                 pub enum #op_error {
                     #(#faults)*
                 }
-            }
+            })
         })
         .collect::<Vec<_>>();
 
