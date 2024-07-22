@@ -40,6 +40,7 @@ pub enum SimpleType {
     Float,
     Int,
     DateTime,
+    Any,
     Complex(QualifiedTypename),
 }
 
@@ -156,6 +157,7 @@ fn parse_type_ref(name: &QualifiedTypename) -> SimpleType {
 fn parse_element(
     field: &Element,
     target_namespace: &str,
+    types: &mut BTreeMap<QualifiedTypename, Type>
 ) -> Result<(TypeAttribute, SimpleType), WsdlError> {
     let field_name = field
         .attributes
@@ -163,8 +165,7 @@ fn parse_element(
         .ok_or(WsdlError::AttributeNotFound("name"))?;
     let field_type = field
         .attributes
-        .get("type")
-        .ok_or(WsdlError::AttributeNotFound("type"))?;
+        .get("type");
     let nillable = match field.attributes.get("nillable").map(|s| s.as_str()) {
         Some("true") => true,
         Some("false") => false,
@@ -207,13 +208,33 @@ fn parse_element(
         max_occurs,
     };
 
-    let simple_type = parse_type_ref(&qualified_type(
-        field_type.as_str(),
-        field.namespaces.as_ref().unwrap(),
-        target_namespace,
-    ));
+    if let Some(field_type) = field_type {
+        let simple_type = parse_type_ref(&qualified_type(
+            field_type.as_str(),
+            field.namespaces.as_ref().unwrap(),
+            target_namespace,
+        ));
 
-    Ok((type_attributes, simple_type))
+        Ok((type_attributes, simple_type))
+    }else if let Some(child) = field.children.first(){
+        let inner_type = match child.as_element(){
+            Some(v) => v,
+            None => todo!()
+        };
+
+        let new_type = match inner_type.name.as_str() {
+            "complexType" => parse_complex_type(inner_type, target_namespace,types)?,
+            "simpleType" => parse_simple_type(inner_type, target_namespace)?,
+            n => unimplemented!("unhandled type {n}"),
+        };
+        log::debug!("{:?}",new_type);
+        let type_name = QualifiedTypename(target_namespace.to_string(),format!("{:}_1",field_name));
+        types.insert(type_name.clone(), new_type);
+        Ok((type_attributes, SimpleType::Complex(type_name)))
+    }else{
+        Err(WsdlError::AttributeNotFound("type"))
+    }
+    
 }
 
 /// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256050(v=vs.100)
@@ -256,7 +277,7 @@ fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlE
 }
 
 /// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256067(v=vs.100)
-fn parse_complex_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlError> {
+fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<QualifiedTypename, Type>) -> Result<Type, WsdlError> {
     let mut fields = BTreeMap::new();
     for child in el.children.iter() {
         let child = child.as_element().ok_or(WsdlError::NotAnElement)?;
@@ -264,14 +285,23 @@ fn parse_complex_type(el: &Element, target_namespace: &str) -> Result<Type, Wsdl
         match child.name.as_str() {
             "sequence" => {
                 for field in child.children.iter().filter_map(|c| c.as_element()) {
-                    // FIXME: dup code
-                    let field_name = field
-                        .attributes
-                        .get("name")
-                        .ok_or(WsdlError::AttributeNotFound("name"))?;
+                    match field.name.as_str() {
+                        "any" => {
 
-                    let field = parse_element(field, target_namespace)?;
-                    fields.insert(field_name.to_string(), field);
+                        },
+                        _ => {
+                            // FIXME: dup code
+                            let field_name = field
+                                .attributes
+                                .get("name");
+                            //TODO: ref schema
+                            if let Some(field_name) = field_name {
+                                let field = parse_element(field, target_namespace,types)?;
+                                fields.insert(field_name.to_string(), field);
+                            }
+                        }
+                    }
+                    
                 }
             }
             n => {
@@ -332,7 +362,7 @@ fn parse_schema(
             .ok_or(WsdlError::AttributeNotFound("name"))?;
 
         let new_type = match inner_type.name.as_str() {
-            "complexType" => parse_complex_type(inner_type, target_namespace)?,
+            "complexType" => parse_complex_type(inner_type, target_namespace,&mut types)?,
             "simpleType" => parse_simple_type(inner_type, target_namespace)?,
             n => unimplemented!("unhandled type {n}"),
         };

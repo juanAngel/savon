@@ -53,6 +53,7 @@ fn gen_simple(ty: &SimpleType) -> Ident {
         SimpleType::Int => Ident::new("i64", Span::call_site()),
         SimpleType::DateTime => Ident::new("chrono::DateTime", Span::call_site()),
         SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
+        SimpleType::Any => Ident::new("Any", Span::call_site()), // TODO: Any type...
         SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
     }
 }
@@ -269,6 +270,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                             }
                         }
                     },
+                    SimpleType::Any => quote!{}
                 }
             })
             .collect::<Vec<_>>();
