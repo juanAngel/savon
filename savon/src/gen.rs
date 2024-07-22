@@ -51,7 +51,9 @@ fn gen_simple(ty: &SimpleType) -> Ident {
         SimpleType::String => Ident::new("String", Span::call_site()),
         SimpleType::Float => Ident::new("f64", Span::call_site()),
         SimpleType::Int => Ident::new("i64", Span::call_site()),
-        SimpleType::DateTime => Ident::new("chrono::DateTime", Span::call_site()),
+        SimpleType::Long => Ident::new("i64", Span::call_site()),
+        SimpleType::DateTime => Ident::new("DateTime", Span::call_site()),
+        //SimpleType::DateTime => Ident::new("chrono::DateTime", Span::call_site()),
         SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
         SimpleType::Any => Ident::new("Any", Span::call_site()), // TODO: Any type...
         SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
@@ -113,6 +115,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         SimpleType::String => Ident::new("String", Span::call_site()),
                         SimpleType::Float => Ident::new("f64", Span::call_site()),
                         SimpleType::Int => Ident::new("i64", Span::call_site()),
+                        SimpleType::Long => Ident::new("u64", Span::call_site()),
                         SimpleType::DateTime => Ident::new("String", Span::call_site()),
                         SimpleType::Complex(s) => Ident::new(&s, Span::call_site()),
                     };*/
@@ -224,6 +227,14 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                             quote!{ #ft?,}
                         }
                     },
+                    SimpleType::Long => {
+                        let ft = quote!{ #prefix.and_then(|e| e.as_long()) };
+                        if attributes.nillable {
+                            quote!{ #ft.ok(),}
+                        } else {
+                            quote!{ #ft?,}
+                        }
+                    },
                     SimpleType::DateTime => {
                         let ft = quote!{
                             #prefix.and_then(|e| e.get_text()
@@ -328,8 +339,8 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
     }
 }
 
-pub fn gen_write(path: &str, out: &str) -> Result<(), crate::Error> {
-    let out_path = format!("{}/example.rs", out);
+pub fn gen_write(path: &str, out: &str,file_name: &str) -> Result<(), crate::Error> {
+    let out_path = format!("{}/{}.rs", out,file_name);
     let v = std::fs::read(path).map_err(|e|crate::Error::Io(e))?;
     let mut output = File::create(out_path).map_err(|e|crate::Error::Io(e))?;
     let wsdl = parse(&v[..]).map_err(|e|crate::Error::Wsdl(e))?;
