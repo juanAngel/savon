@@ -45,7 +45,7 @@ pub enum SimpleType {
     Complex(QualifiedTypename),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum Occurence {
     Unbounded,
     Num(u32),

@@ -6,6 +6,7 @@ pub enum Error {
     Reqwest(reqwest::Error),
     Rpser(crate::rpser::xml::Error),
     Num(std::num::ParseFloatError),
+    DateTimeParse(chrono::format::ParseError)
 }
 
 impl From<crate::wsdl::WsdlError> for Error {
@@ -29,5 +30,11 @@ impl From<reqwest::Error> for Error {
 impl From<std::num::ParseFloatError> for Error {
     fn from(e: std::num::ParseFloatError) -> Self {
         Error::Num(e)
+    }
+}
+
+impl From<chrono::format::ParseError> for Error {
+    fn from(e: chrono::format::ParseError) -> Self {
+        Error::DateTimeParse(e)
     }
 }

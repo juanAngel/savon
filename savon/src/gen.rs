@@ -1,7 +1,8 @@
 use crate::string;
-use crate::wsdl::{parse, QualifiedTypename, SimpleType, Type, Wsdl};
+use crate::wsdl::{parse, Occurence, QualifiedTypename, SimpleType, Type, Wsdl};
 use case::CaseExt;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
+use quote::ToTokens;
 use std::{fs::File, io::Write};
 
 pub trait ToElements {
@@ -45,18 +46,20 @@ impl From<std::io::Error> for GenError {
     }
 }
 
-fn gen_simple(ty: &SimpleType) -> Ident {
+fn gen_simple(ty: &SimpleType) -> TokenStream {
     match ty {
-        SimpleType::Boolean => Ident::new("bool", Span::call_site()),
-        SimpleType::String => Ident::new("String", Span::call_site()),
-        SimpleType::Float => Ident::new("f64", Span::call_site()),
-        SimpleType::Int => Ident::new("i64", Span::call_site()),
-        SimpleType::Long => Ident::new("i64", Span::call_site()),
-        SimpleType::DateTime => Ident::new("DateTime", Span::call_site()),
+        SimpleType::Boolean => Ident::new("bool", Span::call_site()).to_token_stream(),
+        SimpleType::String => Ident::new("String", Span::call_site()).to_token_stream(),
+        SimpleType::Float => Ident::new("f64", Span::call_site()).to_token_stream(),
+        SimpleType::Int => Ident::new("i64", Span::call_site()).to_token_stream(),
+        SimpleType::Long => Ident::new("i64", Span::call_site()).to_token_stream(),
+        SimpleType::DateTime => quote!{
+            chrono::DateTime<chrono::Utc>
+        },
         //SimpleType::DateTime => Ident::new("chrono::DateTime", Span::call_site()),
-        SimpleType::Base64Binary => Ident::new("String", Span::call_site()), // TODO: Base64 type...
-        SimpleType::Any => Ident::new("Any", Span::call_site()), // TODO: Any type...
-        SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()),
+        SimpleType::Base64Binary => Ident::new("String", Span::call_site()).to_token_stream(), // TODO: Base64 type...
+        SimpleType::Any => Ident::new("Any", Span::call_site()).to_token_stream(), // TODO: Any type...
+        SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()).to_token_stream(),
     }
 }
 
@@ -127,25 +130,50 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         attributes.max_occurs.as_ref(),
                     ) {
                         (Some(_), Some(_)) => {
-                            if attributes.nillable {
-                                quote! {
-                                    self.#fname.as_ref().map(|v| v.iter().map(|i| {
-                                        #prefix.with_children(i.to_elements())
-                                    }).collect::<Vec<_>>()).unwrap_or_else(Vec::new)
-                                }
-                            } else {
-                                quote! {
-                                    self.#fname.iter().map(|i| {
-                                        #prefix.with_children(i.to_elements())
-                                    }).collect::<Vec<_>>()
-                                }
+                            match field_type{
+                                SimpleType::Complex(_s) => if attributes.nillable {
+                                    quote! {
+                                        self.#fname.as_ref().map(|v| v.iter().map(|i| {
+                                            #prefix.with_children(i.to_elements())
+                                        }).collect::<Vec<_>>()).unwrap_or_else(Vec::new)
+                                    }
+                                } else {
+                                    quote! {
+                                        self.#fname.iter().map(|i| {
+                                            #prefix.with_children(i.to_elements())
+                                        }).collect::<Vec<_>>()
+                                    }
+                                },
+                                _ => if attributes.nillable {
+                                    quote! {
+                                        self.#fname.as_ref().map(|v| v.iter().map(|i| {
+                                            #prefix.with_children(i)
+                                        }).collect::<Vec<_>>()).unwrap_or_else(Vec::new)
+                                    }
+                                } else {
+                                    quote! {
+                                        self.#fname.iter().map(|i| {
+                                            #prefix.with_text(i.to_string())
+                                        }).collect::<Vec<_>>()
+                                    }
+                                },
                             }
                         }
                         _ => match field_type {
                             SimpleType::Complex(_s) => {
                                 quote! { vec![#prefix.with_children(self.#fname.to_elements())]}
                             }
-                            _ => quote! { vec![#prefix.with_text(self.#fname.to_string())] },
+                            _ => if attributes.nillable{
+                                quote! { 
+                                    match self.#fname.as_ref(){
+                                        Some(v) => vec![#prefix.with_text(v.to_string())],
+                                        None => vec![]
+                                    }
+                                    
+                                }
+                            }else{
+                                quote! { vec![#prefix.with_text(self.#fname.to_string())] }
+                            },
                         },
                     }
                 })
@@ -176,9 +204,9 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
                 let ftype = Literal::string(field_name);
 
-                let prefix = quote!{ #fname: element.get_at_path(&[#ftype]) };
+                let prefix = quote!{ element.get_at_path(&[#ftype]) };
 
-                match field_type {
+                let field = match field_type {
                     SimpleType::Base64Binary => {
                         // TODO: Properly parse this...
                         let ft = quote!{ #prefix.and_then(|e| e.get_text().map(|s| s.to_string())
@@ -215,6 +243,8 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                                              .and_then(|s| s.parse().map_err(savon::Error::from))) };
                         if attributes.nillable {
                             quote!{ #ft.ok(),}
+                        } else if attributes.max_occurs == Some(Occurence::Unbounded){
+                            quote!{ #ft?,}
                         } else {
                             quote!{ #ft?,}
                         }
@@ -231,15 +261,19 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         let ft = quote!{ #prefix.and_then(|e| e.as_long()) };
                         if attributes.nillable {
                             quote!{ #ft.ok(),}
+                        } else if attributes.max_occurs == Some(Occurence::Unbounded){
+                            quote!{ vec![#ft?],}
                         } else {
                             quote!{ #ft?,}
                         }
                     },
                     SimpleType::DateTime => {
                         let ft = quote!{
-                            #prefix.and_then(|e| e.get_text()
+                            #prefix
+                            .and_then(|e| e.get_text().map(|v|v.to_string())
                                              .ok_or(savon::rpser::xml::Error::Empty)
-                                             ).map_err(savon::Error::from)
+                            )
+                            .map_err(savon::Error::from)
                             .and_then(|s|
                                       s.parse::<savon::internal::chrono::DateTime<savon::internal::chrono::offset::Utc>>().map_err(savon::Error::from))
                         };
@@ -265,9 +299,14 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                                     },
                                 };
 
-                                if attributes.nillable {
+                                if attributes.min_occurs.as_ref().is_some_and(|v| match v {
+                                        Occurence::Unbounded => true,
+                                        Occurence::Num(v) => *v>1
+                                }){
+                                    quote!{ #fname: vec![#ft] }
+                                }else if attributes.nillable {
                                     quote!{ #fname: Some(#ft) }
-                                } else {
+                                }else{
                                     quote!{ #fname: #ft }
                                 }
                             },
@@ -282,7 +321,8 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         }
                     },
                     SimpleType::Any => quote!{}
-                }
+                };
+                quote!{#fname: #field}
             })
             .collect::<Vec<_>>();
 
@@ -326,6 +366,22 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             let field = quote! { pub #ident };
 
             // TODO: Serialize/deserialize impls
+            let deserialize_impl = quote! {
+                impl savon::gen::FromElement for #type_name {
+                    fn from_element(_element: &xmltree::Element) -> Result<Self, savon::Error> {
+                        //TODO:
+                        Ok(#type_name::default())
+                    }
+                }
+            };
+            let serialize_impl = quote! {
+                impl savon::gen::ToElements for #type_name {
+                    fn to_elements(&self) -> Vec<xmltree::Element> {
+                        //TODO:
+                        vec![]
+                    }
+                }
+            };
 
             let docstr = format!(" Qualified type: {}", name);
 
@@ -333,6 +389,10 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 #[doc = #docstr]
                 #[derive(Clone, Debug, Default)]
                 pub struct #type_name( #field );
+
+                #serialize_impl
+
+                #deserialize_impl
             }
         }
         _ => panic!(),
