@@ -36,13 +36,15 @@ impl Method {
     pub fn as_xml(&self, api_url: &str) -> String {
         let namespace = "ns";
 
-        let envelope = Element::node("soap:Envelope")
-            .with_attr("xmlns:soap", "http://schemas.xmlsoap.org/soap/envelope/")
-            .with_attr(format!("xmlns:{}", namespace), api_url)
+        let envelope = Element::node("soap12:Envelope")
+            .with_attr("xmlns:soap12", "http://www.w3.org/2003/05/soap-envelope")
+            .with_attr("xmlns:xsi", "http://www.w3.org/2001/XMLSchema-instance")
+            .with_attr("xmlns:xsd", "http://www.w3.org/2001/XMLSchema")
             .with_children(vec![
-                Element::node("soap:Header"),
-                Element::node("soap:Body").with_child(
-                    Element::node(format!("{}:{}", namespace, self.name))
+                //Element::node("soap12:Header"),
+                Element::node("soap12:Body").with_child(
+                    Element::node(format!("{}", self.name))
+                        .with_attr(format!("xmlns"), api_url)
                         .with_children_from_iter(self.args.iter()),
                 ),
             ]);

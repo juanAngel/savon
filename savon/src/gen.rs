@@ -144,10 +144,23 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                                         }).collect::<Vec<_>>()
                                     }
                                 },
+                                SimpleType::DateTime => if attributes.nillable {
+                                    quote! {
+                                        self.#fname.as_ref().map(|v| v.iter().map(|i| {
+                                            #prefix.with_text(i.to_rfc3339())
+                                        }).collect::<Vec<_>>()).unwrap_or_else(Vec::new)
+                                    }
+                                } else {
+                                    quote! {
+                                        self.#fname.iter().map(|i| {
+                                            #prefix.with_text(i.to_rfc3339())
+                                        }).collect::<Vec<_>>()
+                                    }
+                                },
                                 _ => if attributes.nillable {
                                     quote! {
                                         self.#fname.as_ref().map(|v| v.iter().map(|i| {
-                                            #prefix.with_children(i)
+                                            #prefix.with_text(i.to_string())
                                         }).collect::<Vec<_>>()).unwrap_or_else(Vec::new)
                                     }
                                 } else {
@@ -163,6 +176,17 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                             SimpleType::Complex(_s) => {
                                 quote! { vec![#prefix.with_children(self.#fname.to_elements())]}
                             }
+                            SimpleType::DateTime => if attributes.nillable{
+                                quote! { 
+                                    match self.#fname.as_ref(){
+                                        Some(v) => vec![#prefix.with_text(v.to_rfc3339())],
+                                        None => vec![]
+                                    }
+                                    
+                                }
+                            }else{
+                                quote! { vec![#prefix.with_text(self.#fname.to_rfc3339())] }
+                            },
                             _ => if attributes.nillable{
                                 quote! { 
                                     match self.#fname.as_ref(){
@@ -351,7 +375,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
             quote! {
                 #[doc = #docstr]
-                #[derive(Clone, Debug, Default)]
+                #[derive(Clone, Debug, Default,PartialEq)]
                 pub struct #type_name {
                     #(#fields)*
                 }
@@ -368,9 +392,13 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             // TODO: Serialize/deserialize impls
             let deserialize_impl = quote! {
                 impl savon::gen::FromElement for #type_name {
-                    fn from_element(_element: &xmltree::Element) -> Result<Self, savon::Error> {
+                    fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
                         //TODO:
-                        Ok(#type_name::default())
+                        Ok(#type_name(element.get_text()
+                            .ok_or(savon::rpser::xml::Error::Empty)
+                            .map(|v|v.to_string())
+                            .map_err(savon::Error::from)?
+                        ))
                     }
                 }
             };
@@ -387,7 +415,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
             quote! {
                 #[doc = #docstr]
-                #[derive(Clone, Debug, Default)]
+                #[derive(Clone, Debug, Default,PartialEq)]
                 pub struct #type_name( #field );
 
                 #serialize_impl
@@ -443,8 +471,8 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                 let out_name = Ident::new(out, Span::call_site());
 
                 quote! {
-                    pub async fn #op_name(&self, #input_name: #input_type) -> Result<Result<#out_name, ()>, savon::Error> {
-                        savon::http::request_response(&self.client, &self.base_url, #target_namespace, #op_str, &#input_name).await
+                    pub async fn #op_name(&mut self, #input_name: #input_type) -> Result<Result<#out_name, ()>, savon::Error> {
+                        savon::http::request_response(&self.client, &self.base_url, &mut self.cookie,#target_namespace, #op_str, &#input_name).await
                     }
                 }
             },
@@ -493,7 +521,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
             let iname = Ident::new(&message.part_element, Span::call_site());
 
             quote! {
-                #[derive(Clone, Debug, Default)]
+                #[derive(Clone, Debug, Default,PartialEq)]
                 pub struct #mname(pub #iname);
 
                 impl savon::gen::ToElements for #mname {
@@ -522,6 +550,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
 
         pub struct #service_name {
             pub base_url: String,
+            pub cookie: Option<String>,
             pub client: savon::internal::reqwest::Client,
         }
 
@@ -536,6 +565,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
             pub fn with_client(base_url: String, client: savon::internal::reqwest::Client) -> Self {
                 #service_name {
                     base_url,
+                    cookie: None,
                     client,
                 }
             }
@@ -567,7 +597,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                 .collect::<Vec<_>>();
 
             Ok(quote! {
-                #[derive(Clone, Debug)]
+                #[derive(Clone, Debug,PartialEq)]
                 pub enum #op_error {
                     #(#faults)*
                 }

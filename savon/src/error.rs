@@ -4,6 +4,7 @@ pub enum Error {
     Io(std::io::Error),
     Gen(crate::gen::GenError),
     Reqwest(reqwest::Error),
+    StringError(String),
     Rpser(crate::rpser::xml::Error),
     Num(std::num::ParseFloatError),
     DateTimeParse(chrono::format::ParseError)
