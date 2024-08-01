@@ -11,6 +11,9 @@ pub enum WsdlError {
     Parse(xmltree::ParseError),
     ElementNotFound(&'static str),
     AttributeNotFound(&'static str),
+    MessageNotFound(String),
+    TypeNotFound(String),
+    NamespacesNotFound,
     NotAnElement,
     Empty,
 }
@@ -54,13 +57,19 @@ pub enum Occurence {
 #[derive(Debug, Clone, Default)]
 pub struct TypeAttribute {
     pub nillable: bool,
+    pub template: bool,
     pub min_occurs: Option<Occurence>,
     pub max_occurs: Option<Occurence>,
 }
 
 #[derive(Debug, Clone)]
 pub struct ComplexType {
+    pub template: bool,
     pub fields: BTreeMap<String, (TypeAttribute, SimpleType)>,
+}
+#[derive(Debug, Clone)]
+pub struct EnumerationType {
+    pub fields: Vec<String>,
 }
 
 /// A fully qualified type name, consisting of a namespace and type name
@@ -99,6 +108,8 @@ impl std::fmt::Display for QualifiedTypename {
 pub enum Type {
     Simple(SimpleType),
     Complex(ComplexType),
+    Template,
+    Enum(EnumerationType),
     Import(String),
 }
 
@@ -106,6 +117,7 @@ pub enum Type {
 pub struct Message {
     pub part_name: String,
     pub part_element: String,
+    pub template: bool
 }
 
 #[derive(Debug)]
@@ -114,14 +126,16 @@ pub struct Operation {
     pub input: Option<String>,
     pub output: Option<String>,
     pub faults: Option<Vec<String>>,
+    pub output_template: bool,
+    pub input_template: bool
 }
 
 //FIXME: splitting the namespace is the naive way, we should keep the namespace
 // and check for collisions instead
-fn split_namespace(s: &str) -> &str {
+fn split_namespace(s: &str) -> (&str,&str) {
     match s.find(':') {
-        None => s,
-        Some(index) => &s[index + 1..],
+        None => ("",s),
+        Some(index) => (&s[.. index],&s[index + 1..]),
     }
 }
 
@@ -204,8 +218,9 @@ fn parse_element(
     };
 
     trace!("field {:?} -> {:?}", field_name, field_type);
-    let type_attributes = TypeAttribute {
+    let mut type_attributes = TypeAttribute {
         nillable,
+        template:false,
         min_occurs,
         max_occurs,
     };
@@ -229,6 +244,9 @@ fn parse_element(
             "simpleType" => parse_simple_type(inner_type, target_namespace)?,
             n => unimplemented!("unhandled type {n}"),
         };
+        if let Type::Template = new_type {
+            type_attributes.template = true;
+        }
         log::debug!("{:?}",new_type);
         let type_name = QualifiedTypename(target_namespace.to_string(),format!("{:}_1",field_name));
         types.insert(type_name.clone(), new_type);
@@ -281,6 +299,8 @@ fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlE
 /// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256067(v=vs.100)
 fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<QualifiedTypename, Type>) -> Result<Type, WsdlError> {
     let mut fields = BTreeMap::new();
+    let mut template = None;
+    let mut templateFields = false;
     for child in el.children.iter() {
         let child = child.as_element().ok_or(WsdlError::NotAnElement)?;
 
@@ -289,7 +309,17 @@ fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<
                 for field in child.children.iter().filter_map(|c| c.as_element()) {
                     match field.name.as_str() {
                         "any" => {
+                            let namespace = field.attributes.get("namespace");
 
+                            if let Some(namespace) = namespace {
+                                match namespace.as_str() {
+                                    "urn:schemas-microsoft-com:xml-diffgram-v1" => {
+                                        template = Some(Type::Template);
+                                        ()
+                                    },
+                                    _ => ()
+                                };
+                            }
                         },
                         _ => {
                             // FIXME: dup code
@@ -299,6 +329,9 @@ fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<
                             //TODO: ref schema
                             if let Some(field_name) = field_name {
                                 let field = parse_element(field, target_namespace,types)?;
+                                if field.0.template{
+                                    templateFields = true;
+                                }
                                 fields.insert(field_name.to_string(), field);
                             }
                         }
@@ -312,8 +345,15 @@ fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<
             }
         }
     }
+    if let Some(template) = template{
+        Ok(template)
+    }else{
+        Ok(Type::Complex(ComplexType {
+            template:templateFields,
+            fields
+        }))
+    }
 
-    Ok(Type::Complex(ComplexType { fields }))
 }
 
 fn parse_schema(
@@ -442,23 +482,34 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
             .next()
             .unwrap();
         //FIXME: namespace
+        let namespaces = c.namespaces.as_ref().ok_or(WsdlError::NamespacesNotFound)?;
+
         let part_name = c
             .attributes
             .get("name")
             .ok_or(WsdlError::AttributeNotFound("name"))?
             .to_string();
-        let part_element = split_namespace(
-            c.attributes
-                .get("element")
-                .ok_or(WsdlError::AttributeNotFound("element"))?,
-        )
-        .to_string();
+        let el_attr = c.attributes
+            .get("element")
+            .ok_or(WsdlError::AttributeNotFound("element"))?;
+        let (_,part_element) = split_namespace(el_attr);
+        let part_element = part_element.to_string();
+        let qt = qualified_type(el_attr,namespaces,default_ns);
+        log::debug!("warn:cargo=types: {:?}",types);
+
+        let t = types.get(&qt)
+            .ok_or(WsdlError::TypeNotFound(el_attr.to_string()))?;
+        let mut template = false;
+        if let Type::Complex(c) = t{
+            template = c.template;
+        }
 
         messages.insert(
             name.to_string(),
             Message {
                 part_name,
                 part_element,
+                template
             },
         );
     }
@@ -476,23 +527,41 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
         let mut input = None;
         let mut output = None;
         let mut faults = None;
+        let mut output_template = false;
+        let mut inputput_template = false;
         for child in operation
             .children
             .iter()
             .filter_map(|c| c.as_element())
             .filter(|c| c.attributes.get("message").is_some())
         {
-            let message = split_namespace(
-                child
-                    .attributes
-                    .get("message")
-                    .ok_or(WsdlError::AttributeNotFound("message"))?,
-            );
+            let namespaces = child.namespaces.as_ref().ok_or(WsdlError::NamespacesNotFound)?;
+            let msg_attr = child
+                .attributes
+                .get("message")
+                .ok_or(WsdlError::AttributeNotFound("message"))?;
+            let (_,message) = split_namespace(msg_attr);
 
             // FIXME: not testing for unicity
             match child.name.as_str() {
-                "input" => input = Some(message.to_string()),
-                "output" => output = Some(message.to_string()),
+                "input" => {
+                    let msg = messages.get(message)
+                            .ok_or(WsdlError::MessageNotFound(msg_attr.to_string()))?;
+                    
+                    if msg.template {
+                        inputput_template = true;
+                    }
+                    input = Some(message.to_string())
+                },
+                "output" => {
+                    let msg = messages.get(message)
+                            .ok_or(WsdlError::MessageNotFound(msg_attr.to_string()))?;
+                    
+                    if msg.template {
+                        output_template = true;
+                    }
+                    output = Some(message.to_string())
+                },
                 "fault" => {
                     if faults.is_none() {
                         faults = Some(Vec::new());
@@ -512,6 +581,8 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
                 input,
                 output,
                 faults,
+                output_template,
+                input_template: inputput_template
             },
         );
     }

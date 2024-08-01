@@ -80,6 +80,11 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
                     let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
                     let ft = gen_simple(field_type);
+                    let ft = if attributes.template{
+                        quote! { #ft::<T> }
+                    }else{
+                        quote! { #ft }
+                    };
 
                     let ft = match (
                         attributes.min_occurs.as_ref(),
@@ -203,9 +208,17 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 })
                 .collect::<Vec<_>>();
 
+            let (template,template_namespace,where_clause) = if c.template{
+                (quote!{<T>},quote!{::<T>},quote!{
+                    where T: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements
+                })
+            }else{
+                (quote!{},quote!{},quote!{})
+            };
+
             let serialize_impl = if fields_serialize_impl.is_empty() {
                 quote! {
-                    impl savon::gen::ToElements for #type_name {
+                    impl #template savon::gen::ToElements for #type_name #template #where_clause{
                         fn to_elements(&self) -> Vec<xmltree::Element> {
                             vec![]
                         }
@@ -213,7 +226,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 }
             } else {
                 quote! {
-                    impl savon::gen::ToElements for #type_name {
+                    impl #template savon::gen::ToElements for #type_name #template #where_clause{
                         fn to_elements(&self) -> Vec<xmltree::Element> {
                             vec![#(#fields_serialize_impl),*].drain(..).flatten().collect()
                         }
@@ -352,18 +365,18 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
             let deserialize_impl = if fields_deserialize_impl.is_empty() {
                 quote! {
-                    impl savon::gen::FromElement for #type_name {
+                    impl #template savon::gen::FromElement for #type_name #template  #where_clause{
                         fn from_element(_element: &xmltree::Element) -> Result<Self, savon::Error> {
-                            Ok(#type_name {
+                            Ok(#type_name #template_namespace {
                             })
                         }
                     }
                 }
             } else {
                 quote! {
-                    impl savon::gen::FromElement for #type_name {
+                    impl #template savon::gen::FromElement for #type_name #template #where_clause{
                         fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
-                            Ok(#type_name {
+                            Ok(#type_name #template_namespace {
                                 #(#fields_deserialize_impl)*
                             })
                         }
@@ -376,7 +389,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             quote! {
                 #[doc = #docstr]
                 #[derive(Clone, Debug, Default,PartialEq)]
-                pub struct #type_name {
+                pub struct #type_name #template #where_clause{
                     #(#fields)*
                 }
 
@@ -423,6 +436,43 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 #deserialize_impl
             }
         }
+        Type::Template => {
+            let docstr = format!(" Qualified type: {}", name);
+
+            // TODO: Serialize/deserialize impls
+            let deserialize_impl = quote! {
+                impl<T> savon::gen::FromElement for #type_name<T> 
+                    where T: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ToElements{
+                    fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
+                        //TODO:
+                        Ok(#type_name(T::from_element(element)?
+                        ))
+                    }
+                }
+            };
+
+            let serialize_impl = quote! {
+                impl<T> savon::gen::ToElements for #type_name<T>
+                    where T: Clone + std::fmt::Debug + Default + PartialEq  + savon::gen::FromElement + savon::gen::ToElements  {
+                    fn to_elements(&self) -> Vec<xmltree::Element> {
+                        //TODO:
+                        vec![]
+                    }
+                }
+            };
+
+            quote! {
+                #[doc = #docstr]
+                #[derive(Clone, Debug, Default,PartialEq)]
+                pub struct #type_name<T>( pub T )
+                    where T: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ToElements;
+
+                #serialize_impl
+
+                #deserialize_impl
+            }
+        },
+        Type::Enum(_) => panic!(),
         _ => panic!(),
     }
 }
@@ -458,6 +508,25 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
 
         let op_str = Literal::string(name);
 
+
+        
+        let (template,_template_in,template_in_namespace,_template_out,template_out_namespace,where_clause) = if operation.output_template && operation.input_template{
+            (quote!{<I,O>},quote!{<I>},quote!{::<I>},quote!{<O>},quote!{::<O>},quote!{
+                where I: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
+                      O: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements
+            })
+        }else if operation.input_template{
+            (quote!{<I>},quote!{<I>},quote!{::<I>},quote!{},quote!{},quote!{
+                where I: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements
+            })
+        }else if operation.output_template{
+            (quote!{<O>},quote!{},quote!{},quote!{<O>},quote!{::<O>},quote!{
+                where O: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements
+            })
+        }else {
+            (quote!{},quote!{},quote!{},quote!{},quote!{},quote!{})
+        };
+
         Ok(match (operation.output.as_ref(), operation.faults.as_ref()) {
             (None, None) => {
                 quote! {
@@ -471,7 +540,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
                 let out_name = Ident::new(out, Span::call_site());
 
                 quote! {
-                    pub async fn #op_name(&mut self, #input_name: #input_type) -> Result<Result<#out_name, ()>, savon::Error> {
+                    pub async fn #op_name #template(&mut self, #input_name: #input_type #template_in_namespace) -> Result<Result<#out_name #template_out_namespace, ()>, savon::Error> #where_clause {
                         savon::http::request_response(&self.client, &self.base_url, &mut self.cookie,#target_namespace, #op_str, &#input_name).await
                     }
                 }
@@ -519,18 +588,26 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
         .map(|(message_name, message)| {
             let mname = Ident::new(message_name, Span::call_site());
             let iname = Ident::new(&message.part_element, Span::call_site());
+            
+            let (template,_template_namespace,where_clause) = if message.template{
+                (quote!{<T>},quote!{::<T>},quote!{
+                    where T: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements
+                })
+            }else{
+                (quote!{},quote!{},quote!{})
+            };
 
             quote! {
                 #[derive(Clone, Debug, Default,PartialEq)]
-                pub struct #mname(pub #iname);
+                pub struct #mname #template(pub #iname #template) #where_clause;
 
-                impl savon::gen::ToElements for #mname {
+                impl #template savon::gen::ToElements for #mname #template #where_clause{
                     fn to_elements(&self) -> Vec<xmltree::Element> {
                         self.0.to_elements()
                     }
                 }
 
-                impl savon::gen::FromElement for #mname {
+                impl #template savon::gen::FromElement for #mname #template #where_clause {
                     fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
                         #iname::from_element(element).map(#mname)
                     }
