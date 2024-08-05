@@ -72,7 +72,7 @@ pub async fn request_response<Input: ToElements, Output: Debug + FromElement, Er
     let body = response.text().await?;
 
 
-    trace!("received: {}", body);
+    //trace!("received: {}", body);
     let r = Response::from_xml(&body).unwrap();
     //trace!("parsed: {:#?}", r);
     let o = Output::from_element(&r.body);

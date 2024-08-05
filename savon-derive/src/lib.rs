@@ -1,50 +1,55 @@
 use proc_macro::TokenStream;
 use quote::quote;
-use syn::{Error, GenericArgument, PathArguments};
+use syn::{spanned::Spanned, Error, GenericArgument, PathArguments};
 
-fn parseType(type_ident:syn::Type) -> Result<TokenStream,Error>{
+fn parseType(type_ident:syn::Type) -> Result<proc_macro2::TokenStream,Error>{
     let type_token = if let syn::Type::Path(p) = &type_ident{
-        let mut segments = p.path.segments.iter();
-        let it = segments.next().expect("type empty");
-        match it.ident.to_string().as_str() {
+        let segment = p.path.segments.last().expect("type empty");
+        match segment.ident.to_string().as_str() {
             "String" => {
-                quote!{.map(|v|v.to_string())}
+                quote!{
+                    .map(|v|v.to_string())
+                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty))?
+                }
             },
             "Option" => {
-                match it.arguments{
+                match &segment.arguments{
                     PathArguments::AngleBracketed(v) => {
                         let mut args = v.args.iter();
+                        if let Some(GenericArgument::Type(v)) = args.next(){
+                            let type_ident = quote!{#v};
+                            println!("cargo:warn= type_ident {:?}",type_ident.to_string());
 
-                        if let Some(GenericArgument::Type(syn::Type::Path(v))) = args.next(){
-                            let mut segments = v.path.segments.iter();
-                            if let Some(it) = segments.next(){
-                                match it.ident.to_string().as_str() {
+                            if let syn::Type::Path(p) = v{
+                                let segment = p.path.segments.last().expect("type empty");
+
+                                match segment.ident.to_string().as_str() {
                                     "String" => {
                                         quote!{.map(|v|v.to_string())}
                                     },
                                     _ => {
-                                        quote!{.map(|v|#type_ident::parse(v))}
+                                        quote!{.map(|v|v.parse::<#type_ident>().expect("parse error"))}
                                     }
                                 }
                             }else{
-                                panic!("option empty");
-                                quote!{}
+                                return Err(Error::new(p.span(), "option empty"));
                             }
-                            
                         }else{
-                            panic!("option empty");
-                            quote!{}
+                            return Err(Error::new(p.span(), "option empty"));
                         }
                     },
-                    _ => panic!("option empty")
+                    _ => return Err(Error::new(segment.span(), "option empty"))
                 }
             },
             _ => {
-                quote!{.map(|v|#type_ident::parse(v))}
+                quote!{
+                    .map(|v|v.parse::<#type_ident>().expect("parse error"))
+                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty))?
+                }
             }
         }
     }else{
-        quote!{}
+        return Err(Error::new(type_ident.span(), "type unsuported"))
     };
     Ok(type_token)
 }
@@ -75,8 +80,10 @@ pub fn xml_from_element(input: TokenStream) -> TokenStream{
                     );
                     let fl = quote!{
                         let #name = element.get_child(#name_xml)
-                            .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::ElementNotFound(#name_xml)))?
-                            .get_text()#type_token;
+                            .and_then(|v|{
+                                v.get_text()
+                            })
+                            #type_token;
                     };
                     fields_parse.push(fl);
                 }
