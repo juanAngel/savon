@@ -7,6 +7,7 @@ pub enum Error {
     StringError(String),
     Rpser(crate::rpser::xml::Error),
     Num(std::num::ParseFloatError),
+    Int(std::num::ParseIntError),
     DateTimeParse(chrono::format::ParseError)
 }
 

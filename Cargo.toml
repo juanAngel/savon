@@ -1,10 +1,10 @@
-﻿[workspace]
+[workspace]
 resolver = "2"
 members = [
     "savon",
     "savon-test",
     "xtask",
-    "savon-cli",
+    "savon-cli", "savon-derive",
 ]
 
 [workspace.package]

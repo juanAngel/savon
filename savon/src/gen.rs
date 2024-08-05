@@ -62,6 +62,22 @@ fn gen_simple(ty: &SimpleType) -> TokenStream {
         SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()).to_token_stream(),
     }
 }
+pub fn from_template<T>(element: &xmltree::Element) -> Result<Vec<T>, crate::Error>
+        where T: crate::gen::FromElement + Clone
+    {
+
+    let schema = element.get_child("schema");
+    let diffgram = element.get_child("diffgram").ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
+    let doc = diffgram.get_child("DocumentElement").ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
+    let doc_child = doc.children.iter();
+    let mut result = vec![];
+    for it in doc_child{
+        let el = it.as_element().ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
+        result.push(T::from_element(el)?);
+    }
+
+    Ok(result)
+}
 
 fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
     let type_name = Ident::new(&name.name().to_camel(), Span::call_site());
@@ -445,8 +461,8 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                     where T: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ToElements{
                     fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
                         //TODO:
-                        Ok(#type_name(T::from_element(element)?
-                        ))
+                        
+                        Ok(#type_name(savon::gen::from_template(element)?))
                     }
                 }
             };
@@ -464,7 +480,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             quote! {
                 #[doc = #docstr]
                 #[derive(Clone, Debug, Default,PartialEq)]
-                pub struct #type_name<T>( pub T )
+                pub struct #type_name<T>( pub Vec<T> )
                     where T: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ToElements;
 
                 #serialize_impl
@@ -622,6 +638,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
         use savon::internal::xmltree;
         #[allow(unused_imports)]
         use savon::rpser::xml::*;
+        use savon::wsdl::WsdlError;
 
         #(#types)*
 
