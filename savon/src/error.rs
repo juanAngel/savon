@@ -8,7 +8,8 @@ pub enum Error {
     Rpser(crate::rpser::xml::Error),
     Num(std::num::ParseFloatError),
     Int(std::num::ParseIntError),
-    DateTimeParse(chrono::format::ParseError)
+    DateTimeParse(chrono::format::ParseError),
+    ParseError(String),
 }
 
 impl From<crate::wsdl::WsdlError> for Error {

@@ -2,7 +2,7 @@ use proc_macro::TokenStream;
 use quote::quote;
 use syn::{spanned::Spanned, Error, GenericArgument, PathArguments};
 
-fn parseType(type_ident:syn::Type) -> Result<proc_macro2::TokenStream,Error>{
+fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::TokenStream,Error>{
     let type_token = if let syn::Type::Path(p) = &type_ident{
         let segment = p.path.segments.last().expect("type empty");
         match segment.ident.to_string().as_str() {
@@ -28,7 +28,12 @@ fn parseType(type_ident:syn::Type) -> Result<proc_macro2::TokenStream,Error>{
                                         quote!{.map(|v|v.to_string())}
                                     },
                                     _ => {
-                                        quote!{.map(|v|v.parse::<#type_ident>().expect("parse error"))}
+                                        quote!{
+                                            .map(|v|v.parse::<#type_ident>()
+                                                .map(|v|Some(v))
+                                                .map_err(|e|savon::Error::ParseError(e.to_string())))
+                                            .unwrap_or(Ok(None))?
+                                        }
                                     }
                                 }
                             }else{
@@ -43,8 +48,8 @@ fn parseType(type_ident:syn::Type) -> Result<proc_macro2::TokenStream,Error>{
             },
             _ => {
                 quote!{
-                    .map(|v|v.parse::<#type_ident>().expect("parse error"))
-                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty))?
+                    .map(|v|v.parse::<#type_ident>().map_err(|e|savon::Error::ParseError(e.to_string())))
+                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty))??
                 }
             }
         }
@@ -71,7 +76,7 @@ pub fn xml_from_element(input: TokenStream) -> TokenStream{
                     let name = it.ident.as_ref().unwrap();
                     let name_xml = name.to_string().to_uppercase();
                     let type_ident = it.ty.clone();
-                    let type_token = parseType(type_ident).expect("");
+                    let type_token = parse_type(&name_xml,type_ident).expect("");
                     
                     fields_name.push(
                         quote!{
