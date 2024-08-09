@@ -488,7 +488,57 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 #deserialize_impl
             }
         },
-        Type::Enum(_) => panic!(),
+        Type::Enum(e) => {
+            let docstr = format!(" Qualified type: {}", name);
+            let field_names = e.fields.iter().map(|v|{
+                Ident::new(v, Span::call_site())
+            }).collect::<Vec<_>>();
+            let default = field_names.first();
+            let field_match = e.fields.iter().map(|v|{
+                let ident = Ident::new(v, Span::call_site());
+                quote! {#v => Self::#ident}
+            }).collect::<Vec<_>>();
+
+            // TODO: Serialize/deserialize impls
+            let deserialize_impl = quote! {
+                impl savon::gen::FromElement for #type_name{
+                    fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
+                        let name = element.get_text().ok_or(savon::rpser::xml::Error::Empty).map_err(savon::Error::from)?;
+                        
+                        Ok(match &(*name){
+                            #(#field_match,)*
+                            _ => return Err(savon::Error::ParseError("unknow field".to_string()))
+                        })
+                    }
+                }
+            };
+
+            let serialize_impl = quote! {
+                impl savon::gen::ToElements for #type_name{
+                    fn to_elements(&self) -> Vec<xmltree::Element> {
+                        //TODO:
+                        vec![]
+                    }
+                }
+            };
+
+
+            quote! {
+                #[doc = #docstr]
+                #[derive(Clone, Debug,PartialEq)]
+                pub enum #type_name{
+                    #(#field_names,)*
+                }
+                impl Default for #type_name {
+                    fn default() -> Self { 
+                        Self::#default
+                    }
+                }
+                #serialize_impl
+
+                #deserialize_impl
+            }
+        },
         _ => panic!(),
     }
 }

@@ -273,34 +273,50 @@ fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlE
     let inner = el.children[0].as_element().ok_or(WsdlError::NotAnElement)?;
     let base = match inner.name.as_str() {
         "restriction" => {
+            let mut enum_values = vec![];
+            let mut pattern_values = vec![];
             // Extends a base type with certain restrictions.
-            for _child in inner.children.iter().filter_map(|c| c.as_element()) {
+            for child in inner.children.iter().filter_map(|c| c.as_element()) {
                 // https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256057(v=vs.100)
-                // TODO: Parse these...
+                match child.name.as_str() {
+                    "pattern" => pattern_values.push(child.attributes
+                                        .get("value")
+                                        .ok_or(WsdlError::AttributeNotFound("value"))?.clone()),
+                    "enumeration" => enum_values.push(child.attributes
+                                        .get("value")
+                                        .ok_or(WsdlError::AttributeNotFound("value"))?.clone()),
+                    _ => ()
+                }
             }
 
             let base_type = inner
                 .attributes
                 .get("base")
                 .ok_or(WsdlError::AttributeNotFound("base"))?;
-
-            parse_type_ref(&qualified_type(
-                base_type,
-                el.namespaces.as_ref().unwrap(),
-                target_namespace,
-            ))
+            //TODO: add string restricted for pattern
+            if enum_values.is_empty(){
+                Type::Simple(parse_type_ref(&qualified_type(
+                    base_type,
+                    el.namespaces.as_ref().unwrap(),
+                    target_namespace,
+                )))
+            }else{
+                Type::Enum(EnumerationType{
+                    fields: enum_values
+                })
+            }
         }
         _n => panic!("unhandled simpleType inner: {_n}"),
     };
 
-    Ok(Type::Simple(base))
+    Ok(base)
 }
 
 /// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256067(v=vs.100)
 fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<QualifiedTypename, Type>) -> Result<Type, WsdlError> {
     let mut fields = BTreeMap::new();
     let mut template = None;
-    let mut templateFields = false;
+    let mut template_fields = false;
     for child in el.children.iter() {
         let child = child.as_element().ok_or(WsdlError::NotAnElement)?;
 
@@ -330,7 +346,7 @@ fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<
                             if let Some(field_name) = field_name {
                                 let field = parse_element(field, target_namespace,types)?;
                                 if field.0.template{
-                                    templateFields = true;
+                                    template_fields = true;
                                 }
                                 fields.insert(field_name.to_string(), field);
                             }
@@ -349,7 +365,7 @@ fn parse_complex_type(el: &Element, target_namespace: &str,types: &mut BTreeMap<
         Ok(template)
     }else{
         Ok(Type::Complex(ComplexType {
-            template:templateFields,
+            template:template_fields,
             fields
         }))
     }

@@ -4,7 +4,8 @@ use syn::{spanned::Spanned, Error, GenericArgument, PathArguments};
 
 fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::TokenStream,Error>{
     let type_token = if let syn::Type::Path(p) = &type_ident{
-        let segment = p.path.segments.last().expect("type empty");
+        let segment = p.path.segments.last()
+            .ok_or(Error::new(type_ident.span(), "type empty"))?;
         match segment.ident.to_string().as_str() {
             "String" => {
                 quote!{
@@ -21,7 +22,8 @@ fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::Token
                             println!("cargo:warn= type_ident {:?}",type_ident.to_string());
 
                             if let syn::Type::Path(p) = v{
-                                let segment = p.path.segments.last().expect("type empty");
+                                let segment = p.path.segments.last()
+                                    .ok_or(Error::new(type_ident.span(), "type empty"))?;
 
                                 match segment.ident.to_string().as_str() {
                                     "String" => {
