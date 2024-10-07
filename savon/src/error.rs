@@ -6,6 +6,7 @@ pub enum Error {
     Reqwest(reqwest::Error),
     StringError(String),
     Rpser(crate::rpser::xml::Error),
+    Rpc(crate::rpser::RpcError),
     Num(std::num::ParseFloatError),
     Int(std::num::ParseIntError),
     DateTimeParse(chrono::format::ParseError),
