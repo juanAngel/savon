@@ -95,6 +95,15 @@ pub trait BuildElement {
     fn get_at_path(&self, path: &[&str]) -> Result<Element, Error>;
 
     /// Extract the value of `long` type from the text.
+    fn as_byte(&self) -> Result<u8, Error>;
+
+    /// Extract the value of `long` type from the text.
+    fn as_ushort(&self) -> Result<u16, Error>;
+
+    /// Extract the value of `long` type from the text.
+    fn as_ulong(&self) -> Result<u64, Error>;
+
+    /// Extract the value of `long` type from the text.
     fn as_long(&self) -> Result<i64, Error>;
 
     /// Extract the value of `int` type from the text.
@@ -252,6 +261,44 @@ impl BuildElement for Element {
 
     fn as_int(&self) -> Result<i32, Error> {
         let text = get_typed_string(self, "int")?;
+        Ok(match text.parse() {
+            Ok(ref value) => *value,
+            Err(e) => {
+                return Err(Error::ParseIntError {
+                    name: self.name.clone(),
+                    inner: e,
+                });
+            }
+        })
+    }
+
+    fn as_byte(&self) -> Result<u8, Error> {
+        let text = get_typed_string(self, "unsignedByte")?;
+        Ok(match text.parse() {
+            Ok(ref value) => *value,
+            Err(e) => {
+                return Err(Error::ParseIntError {
+                    name: self.name.clone(),
+                    inner: e,
+                });
+            }
+        })
+    }
+    fn as_ushort(&self) -> Result<u16, Error> {
+        let text = get_typed_string(self, "unsignedShort")?;
+        Ok(match text.parse() {
+            Ok(ref value) => *value,
+            Err(e) => {
+                return Err(Error::ParseIntError {
+                    name: self.name.clone(),
+                    inner: e,
+                });
+            }
+        })
+    }
+
+    fn as_ulong(&self) -> Result<u64, Error> {
+        let text = get_typed_string(self, "unsignedLong")?;
         Ok(match text.parse() {
             Ok(ref value) => *value,
             Err(e) => {

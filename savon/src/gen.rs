@@ -56,20 +56,29 @@ fn gen_simple(ty: &SimpleType) -> TokenStream {
         SimpleType::Boolean => Ident::new("bool", Span::call_site()).to_token_stream(),
         SimpleType::String => Ident::new("String", Span::call_site()).to_token_stream(),
         SimpleType::Float => Ident::new("f64", Span::call_site()).to_token_stream(),
+        SimpleType::Double => Ident::new("f64", Span::call_site()).to_token_stream(),
+        SimpleType::Decimal => Ident::new("f64", Span::call_site()).to_token_stream(),
+        SimpleType::UnsignedByte => Ident::new("u8", Span::call_site()).to_token_stream(),
+        SimpleType::UnsignedShort => Ident::new("u16", Span::call_site()).to_token_stream(),
+        SimpleType::UnsignedInt => Ident::new("u64", Span::call_site()).to_token_stream(),
         SimpleType::Int => Ident::new("i64", Span::call_site()).to_token_stream(),
         SimpleType::Long => Ident::new("i64", Span::call_site()).to_token_stream(),
+        SimpleType::UnsignedLong => Ident::new("u64", Span::call_site()).to_token_stream(),
         SimpleType::DateTime => quote!{
             chrono::DateTime<chrono::Utc>
         },
         //SimpleType::DateTime => Ident::new("chrono::DateTime", Span::call_site()),
         SimpleType::Base64Binary => Ident::new("String", Span::call_site()).to_token_stream(), // TODO: Base64 type...
-        SimpleType::Any => Ident::new("Any", Span::call_site()).to_token_stream(), // TODO: Any type...
-        SimpleType::Complex(n) => Ident::new(&n.name().to_camel(), Span::call_site()).to_token_stream(),
+        SimpleType::Any => {
+            //let type_name = Ident::new("Element", Span::call_site());
+            quote! { () }
+        }, // TODO: Any type...
+        SimpleType::Complex(n) => Ident::new(&n.name(), Span::call_site()).to_token_stream(),
     }
 }
 pub fn from_template<T,E>(element: &xmltree::Element) -> Result<(Option<E>,Option<Vec<T>>), crate::Error>
-        where T: crate::gen::FromElement + Clone,
-              E: crate::gen::ErrorElement + crate::gen::FromElement
+        where T: crate::r#gen::FromElement + Clone,
+              E: crate::r#gen::ErrorElement + crate::r#gen::FromElement
     {
 
     let _schema = element.get_child("schema");
@@ -92,7 +101,7 @@ pub fn from_template<T,E>(element: &xmltree::Element) -> Result<(Option<E>,Optio
 }
 
 fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
-    let type_name = Ident::new(&name.name().to_camel(), Span::call_site());
+    let type_name = Ident::new(&name.name(), Span::call_site());
 
     match t {
         Type::Complex(c) => {
@@ -106,25 +115,36 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         None
                     };
 
-                    let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
+                    let fname = match string::to_snake(field_name){
+                        n if n == "type" || n == "format" || n == "default" => {
+                            format_ident!("r#{}", n)
+                        },
+                        n => {
+                            Ident::new(&n, Span::call_site())
+                        }
+                    };
                     let ft = gen_simple(field_type);
                     let ft = if attributes.template{
                         quote! { #ft::<T,E> }
                     }else{
                         quote! { #ft }
                     };
+                    let ft = match (field_type,attributes.max_occurs.as_ref()) {
+                        (SimpleType::Complex(_), _) => {
+                            quote! { Box<#ft> }
+                        },
+                        _ => quote! { #ft },
+                    };
 
                     let ft = match (
                         attributes.min_occurs.as_ref(),
                         attributes.max_occurs.as_ref(),
+                        attributes.nillable
                     ) {
-                        (Some(_), Some(_)) => quote! { Vec<#ft> },
+                        (Some(_), Some(Occurence::Num(1)),true) => quote! { Option<#ft> },
+                        (Some(_), Some(_),_) => quote! { Vec<#ft> },
+                        (_,_, true) => quote! { Option<#ft> },
                         _ => quote! { #ft },
-                    };
-                    let ft = if attributes.nillable {
-                        quote! { Option<#ft> }
-                    } else {
-                        ft
                     };
 
                     let docstr = if let Some(tgt) = tgt {
@@ -144,7 +164,14 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 .fields
                 .iter()
                 .map(|(field_name, (attributes, field_type))| {
-                    let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
+                    let fname = match string::to_snake(field_name){
+                        n if n == "type" => {
+                            format_ident!("r#{}", n)
+                        },
+                        n => {
+                            Ident::new(&n, Span::call_site())
+                        }
+                    };
                     //FIXME: handle more complex types
                     /*let ft = match field_type {
                         SimpleType::Boolean => Ident::new("bool", Span::call_site()),
@@ -162,8 +189,27 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         attributes.min_occurs.as_ref(),
                         attributes.max_occurs.as_ref(),
                     ) {
+                        (Some(Occurence::Num(_)), Some(Occurence::Num(max))) if *max == 1 => {
+                            match field_type {
+                                SimpleType::Complex(s) => quote! {
+                                        self.#fname.iter().map(|i| {
+                                            #prefix.with_children(i.to_elements())
+                                        }).collect::<Vec<_>>()
+                                },
+                                SimpleType::DateTime => quote! {
+                                        self.#fname.iter().map(|i| {
+                                            #prefix.with_text(i.to_rfc3339())
+                                        }).collect::<Vec<_>>()
+                                },
+                                _ => quote! {
+                                    self.#fname.iter().map(|i| {
+                                        #prefix.with_text(i.to_string())
+                                    }).collect::<Vec<_>>()
+                                },
+                            }
+                        },
                         (Some(_), Some(_)) => {
-                            match field_type{
+                            match field_type {
                                 SimpleType::Complex(_s) => if attributes.nillable {
                                     quote! {
                                         self.#fname.as_ref().map(|v| v.iter().map(|i| {
@@ -206,6 +252,20 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                             }
                         }
                         _ => match field_type {
+                            SimpleType::Complex(_s) if attributes.nillable => {
+                                quote! { 
+                                    vec![
+                                        if let Some(v) = self.#fname.as_ref() {
+                                            #prefix.with_children(v.to_elements())
+                                        } else {
+                                            #prefix.with_children(Vec::new())
+                                        }
+                                    ]
+                                }
+                            }
+                            SimpleType::Complex(_s) if attributes.nillable => {
+                                quote! { vec![#prefix.with_children(self.#fname.to_elements())]}
+                            }
                             SimpleType::Complex(_s) => {
                                 quote! { vec![#prefix.with_children(self.#fname.to_elements())]}
                             }
@@ -215,7 +275,6 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                                         Some(v) => vec![#prefix.with_text(v.to_rfc3339())],
                                         None => vec![]
                                     }
-                                    
                                 }
                             }else{
                                 quote! { vec![#prefix.with_text(self.#fname.to_rfc3339())] }
@@ -238,8 +297,8 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
             let (template,template_namespace,where_clause) = if c.template{
                 (quote!{<T,E>},quote!{::<T,E>},quote!{
-                    where T: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ErrorElement
+                    where T: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::r#gen::FromElement + savon::r#gen::ErrorElement
                 })
             }else{
                 (quote!{},quote!{},quote!{})
@@ -247,7 +306,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
             let serialize_impl = if fields_serialize_impl.is_empty() {
                 quote! {
-                    impl #template savon::gen::ToElements for #type_name #template #where_clause{
+                    impl #template savon::r#gen::ToElements for #type_name #template #where_clause{
                         fn to_elements(&self) -> Vec<xmltree::Element> {
                             vec![]
                         }
@@ -255,7 +314,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 }
             } else {
                 quote! {
-                    impl #template savon::gen::ToElements for #type_name #template #where_clause{
+                    impl #template savon::r#gen::ToElements for #type_name #template #where_clause{
                         fn to_elements(&self) -> Vec<xmltree::Element> {
                             vec![#(#fields_serialize_impl),*].drain(..).flatten().collect()
                         }
@@ -267,14 +326,20 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             .fields
             .iter()
             .map(|(field_name, (attributes, field_type))| {
-                let fname = Ident::new(&string::to_snake(field_name), Span::call_site());
+                let fname = match string::to_snake(field_name){
+                    n if n == "type" || n == "format" || n == "default" => {
+                        format_ident!("r#{}", n)
+                    },
+                    n => {
+                        Ident::new(&n, Span::call_site())
+                    }
+                };
                 let ftype = Literal::string(field_name);
 
                 let prefix = quote!{ element.get_at_path(&[#ftype]) };
 
                 let field = match field_type {
                     SimpleType::Base64Binary => {
-                        // TODO: Properly parse this...
                         let ft = quote!{ #prefix.and_then(|e| e.get_text().map(|s| s.to_string())
                                               .ok_or(savon::rpser::xml::Error::Empty)
                                               ) };
@@ -293,24 +358,45 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         }
                     },
                     SimpleType::String => {
-                        let ft = quote!{ #prefix.and_then(|e| e.get_text().map(|s| s.to_string())
-                                             .ok_or(savon::rpser::xml::Error::Empty)
-                                             ) };
+                        let ft = match attributes.max_occurs {
+                            Some(Occurence::Unbounded) =>quote!{ 
+                                    #prefix.and_then(|e| e.get_text().map(|s| vec![s.to_string()])
+                                                    .ok_or(savon::rpser::xml::Error::Empty)
+                                ) 
+                            },
+                            Some(Occurence::Num(n)) if n > 1 => quote!{ 
+                                    #prefix.and_then(|e| e.get_text().map(|s| vec![s.to_string()])
+                                                    .ok_or(savon::rpser::xml::Error::Empty)
+                                ) 
+                            },
+                            _ => quote!{ 
+                                    #prefix.and_then(|e| e.get_text().map(|s| s.to_string())
+                                                    .ok_or(savon::rpser::xml::Error::Empty)
+                                ) 
+                            }
+                        };
                         if attributes.nillable {
                             quote!{ #ft.ok(),}
                         } else {
                             quote!{ #ft?,}
                         }
                     },
-                    SimpleType::Float => {
+                    SimpleType::Float|SimpleType::Double|SimpleType::Decimal => {
                         let ft = quote!{ #prefix.map_err(savon::Error::from).and_then(|e| e.get_text()
                                              .ok_or(savon::rpser::xml::Error::Empty)
                                              .map_err(savon::Error::from)
-                                             .and_then(|s| s.parse().map_err(savon::Error::from))) };
+                                             .and_then(|s| s.parse::<f64>().map_err(savon::Error::from))) };
+                        match (attributes.max_occurs.as_ref(), attributes.nillable) {
+                            (Some(Occurence::Unbounded), _) => quote!{ vec![#ft?],},
+                            (Some(Occurence::Num(n)), _) if *n > 1 => quote!{ vec![#ft?],},
+                            (_, true) => quote!{ #ft.ok(),},
+                            _ => quote!{ #ft?,}
+                        }
+                    },
+                    SimpleType::UnsignedInt => {
+                        let ft = quote!{ #prefix.and_then(|e| e.as_ulong()) };
                         if attributes.nillable {
                             quote!{ #ft.ok(),}
-                        } else if attributes.max_occurs == Some(Occurence::Unbounded){
-                            quote!{ #ft?,}
                         } else {
                             quote!{ #ft?,}
                         }
@@ -319,6 +405,38 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         let ft = quote!{ #prefix.and_then(|e| e.as_long()) };
                         if attributes.nillable {
                             quote!{ #ft.ok(),}
+                        } else if attributes.max_occurs == Some(Occurence::Unbounded){
+                            quote!{ vec![#ft?],}
+                        } else {
+                            quote!{ #ft?,}
+                        }
+                    },
+                    SimpleType::UnsignedByte => {
+                        let ft = quote!{ #prefix.and_then(|e| e.as_byte()) };
+                        if attributes.nillable {
+                            quote!{ #ft.ok(),}
+                        } else if attributes.max_occurs == Some(Occurence::Unbounded){
+                            quote!{ vec![#ft?],}
+                        } else {
+                            quote!{ #ft?,}
+                        }
+                    },
+                    SimpleType::UnsignedShort => {
+                        let ft = quote!{ #prefix.and_then(|e| e.as_ushort()) };
+                        if attributes.nillable {
+                            quote!{ #ft.ok(),}
+                        } else if attributes.max_occurs == Some(Occurence::Unbounded){
+                            quote!{ vec![#ft?],}
+                        } else {
+                            quote!{ #ft?,}
+                        }
+                    },
+                    SimpleType::UnsignedLong => {
+                        let ft = quote!{ #prefix.and_then(|e| e.as_ulong()) };
+                        if attributes.nillable {
+                            quote!{ #ft.ok(),}
+                        } else if attributes.max_occurs == Some(Occurence::Unbounded){
+                            quote!{ vec![#ft?],}
                         } else {
                             quote!{ #ft?,}
                         }
@@ -350,34 +468,58 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         }
                     },
                     SimpleType::Complex(n) => {
-                        let complex_type = Ident::new(&n.name().to_camel(), Span::call_site());
+                        let complex_type = Ident::new(&n.name(), Span::call_site());
 
                         match (attributes.min_occurs.as_ref(), attributes.max_occurs.as_ref()) {
-                            (Some(_), Some(_)) => {
+                            (Some(Occurence::Num(_)), Some(Occurence::Num(max))) if *max == 1 => {
                                 let ft = quote! {
                                     {
-                                        let mut v = vec![];
-                                        for elem in element.children.iter()
-                                            .filter_map(|c| c.as_element()) {
-                                                v.push(#complex_type::from_element(elem)?);
-                                            }
-                                        v
-                                    },
+                                        #complex_type::from_element(element)?
+                                    }
                                 };
 
                                 if attributes.min_occurs.as_ref().is_some_and(|v| match v {
                                         Occurence::Unbounded => true,
                                         Occurence::Num(v) => *v>1
                                 }){
-                                    quote!{ #fname: vec![#ft] }
+                                    quote!{ vec![#ft], }
                                 }else if attributes.nillable {
-                                    quote!{ #fname: Some(#ft) }
+                                    quote!{ Some(Box::new(#ft)), }
                                 }else{
-                                    quote!{ #fname: #ft }
+                                    quote!{ Box::new(#ft), }
+                                }
+                            }
+                            (Some(_), Some(_)) => {
+                                let ft = quote! {
+                                    {
+                                        let mut v = vec![];
+                                        for elem in element.children.iter()
+                                            .filter_map(|c| c.as_element()) {
+                                                v.push(Box::new(#complex_type::from_element(elem)?));
+                                            }
+                                        v
+                                    }
+                                };
+
+                                if attributes.min_occurs.as_ref().is_some_and(|v| match v {
+                                        Occurence::Unbounded => true,
+                                        Occurence::Num(v) => *v>1
+                                }){
+                                    quote!{ vec![#ft], }
+                                }else if attributes.nillable {
+                                    quote!{ Some(#ft), }
+                                }else{
+                                    quote!{ #ft, }
                                 }
                             },
                             _ => {
-                                let ft = quote!{ #prefix.map_err(savon::Error::from).and_then(|e| #complex_type::from_element(&e).map_err(savon::Error::from)) };
+                                let ft = quote!{ 
+                                    #prefix.map_err(savon::Error::from)
+                                        .and_then(|e| #complex_type::from_element(&e)
+                                            .map(|v| Box::new(v))
+                                            .map_err(savon::Error::from)
+                                        )
+                                };
                                 if attributes.nillable {
                                     quote!{ #ft.ok(),}
                                 } else {
@@ -386,7 +528,19 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                             }
                         }
                     },
-                    SimpleType::Any => quote!{}
+                    SimpleType::Any => {
+                        let ft = quote! { () };
+                        if attributes.min_occurs.as_ref().is_some_and(|v| match v {
+                                        Occurence::Unbounded => true,
+                                        Occurence::Num(v) => *v>1
+                                }){
+                            quote!{ vec![#ft], }
+                        }else if attributes.nillable {
+                            quote!{ Some(#ft), }
+                        }else{
+                            quote!{ #ft, }
+                        }
+                    }
                 };
                 quote!{#fname: #field}
             })
@@ -394,7 +548,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
             let deserialize_impl = if fields_deserialize_impl.is_empty() {
                 quote! {
-                    impl #template savon::gen::FromElement for #type_name #template  #where_clause{
+                    impl #template savon::r#gen::FromElement for #type_name #template  #where_clause{
                         fn from_element(_element: &xmltree::Element) -> Result<Self, savon::Error> {
                             Ok(#type_name #template_namespace {
                             })
@@ -403,7 +557,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 }
             } else {
                 quote! {
-                    impl #template savon::gen::FromElement for #type_name #template #where_clause{
+                    impl #template savon::r#gen::FromElement for #type_name #template #where_clause{
                         fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
                             Ok(#type_name #template_namespace {
                                 #(#fields_deserialize_impl)*
@@ -413,11 +567,13 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 }
             };
 
+            log::debug!("Generated type: {}", type_name.to_string());
             let docstr = format!(" Qualified type: {}", name);
 
             quote! {
                 #[doc = #docstr]
                 #[derive(Clone, Debug, Default,PartialEq)]
+                #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
                 pub struct #type_name #template #where_clause{
                     #(#fields)*
                 }
@@ -428,12 +584,12 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             }
         }
         Type::Simple(t) => {
-            let ident = gen_simple(t);
+            let ident = r#gen_simple(t);
             let field = quote! { pub #ident };
 
             // TODO: Serialize/deserialize impls
             let deserialize_impl = quote! {
-                impl savon::gen::FromElement for #type_name {
+                impl savon::r#gen::FromElement for #type_name {
                     fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
                         //TODO:
                         Ok(#type_name(element.get_text()
@@ -445,7 +601,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                 }
             };
             let serialize_impl = quote! {
-                impl savon::gen::ToElements for #type_name {
+                impl savon::r#gen::ToElements for #type_name {
                     fn to_elements(&self) -> Vec<xmltree::Element> {
                         //TODO:
                         vec![]
@@ -458,6 +614,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             quote! {
                 #[doc = #docstr]
                 #[derive(Clone, Debug, Default,PartialEq)]
+                #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
                 pub struct #type_name( #field );
 
                 #serialize_impl
@@ -469,20 +626,20 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             let docstr = format!(" Qualified type: {}", name);
 
             let deserialize_impl = quote! {
-                impl<T,E> savon::gen::FromElement for #type_name<T,E> 
-                    where T: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ErrorElement {
+                impl<T,E> savon::r#gen::FromElement for #type_name<T,E> 
+                    where T: Clone + std::fmt::Debug + Default + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::r#gen::FromElement + savon::r#gen::ErrorElement {
                     fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
-                        let (e,v) = savon::gen::from_template(element)?;
+                        let (e,v) = savon::r#gen::from_template(element)?;
                         Ok(#type_name(e,v))
                     }
                 }
             };
 
             let serialize_impl = quote! {
-                impl<T,E> savon::gen::ToElements for #type_name<T,E>
-                    where T: Clone + std::fmt::Debug + Default + PartialEq  + savon::gen::FromElement + savon::gen::ToElements,
-                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ErrorElement  {
+                impl<T,E> savon::r#gen::ToElements for #type_name<T,E>
+                    where T: Clone + std::fmt::Debug + Default + PartialEq  + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::r#gen::FromElement + savon::r#gen::ErrorElement  {
                     fn to_elements(&self) -> Vec<xmltree::Element> {
                         //TODO:
                         vec![]
@@ -493,9 +650,10 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             quote! {
                 #[doc = #docstr]
                 #[derive(Clone, Debug, Default,PartialEq)]
+                #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
                 pub struct #type_name<T,E>( pub Option<E>,pub Option<Vec<T>> )
-                    where T: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::gen::FromElement + savon::gen::ErrorElement;
+                    where T: Clone + std::fmt::Debug + Default + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                          E: Clone + std::fmt::Debug + Default + PartialEq + savon::r#gen::FromElement + savon::r#gen::ErrorElement;
 
                 #serialize_impl
 
@@ -515,7 +673,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
 
             // TODO: Serialize/deserialize impls
             let deserialize_impl = quote! {
-                impl savon::gen::FromElement for #type_name{
+                impl savon::r#gen::FromElement for #type_name{
                     fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
                         let name = element.get_text().ok_or(savon::rpser::xml::Error::Empty).map_err(savon::Error::from)?;
                         
@@ -528,7 +686,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             };
 
             let serialize_impl = quote! {
-                impl savon::gen::ToElements for #type_name{
+                impl savon::r#gen::ToElements for #type_name{
                     fn to_elements(&self) -> Vec<xmltree::Element> {
                         //TODO:
                         vec![]
@@ -540,6 +698,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
             quote! {
                 #[doc = #docstr]
                 #[derive(Clone, Debug,PartialEq)]
+                #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
                 pub enum #type_name{
                     #(#field_names,)*
                 }
@@ -564,7 +723,9 @@ pub fn gen_write(path: &str, out: &str,file_name: &str) -> Result<(), crate::Err
     let wsdl = parse(&v[..]).map_err(|e|crate::Error::Wsdl(e))?;
 
     let generated = gen(&wsdl).map_err(|e|crate::Error::Gen(e.into()))?;
-    let formatted = prettyplease::unparse(&syn::parse_quote!(#generated));
+    //println!("generated:\n{}", generated);
+    let file = syn::parse_quote!(#generated);
+    let formatted = prettyplease::unparse(&file);
 
     output.write_all(formatted.as_bytes()).map_err(|e|crate::Error::Io(e))?;
     output.flush().map_err(|e|crate::Error::Io(e))?;
@@ -576,13 +737,13 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
     let target_namespace = Literal::string(&wsdl.target_namespace);
 
     let operations = wsdl.operations.iter().flat_map(|(name, operation)| {
-        let op_name = Ident::new(&string::to_snake(name), Span::call_site());
+        let op_name = Ident::new(&name, Span::call_site());
         let input_name = match operation.input.as_ref(){
             Some(v) => Ident::new(&string::to_snake(v), Span::call_site()),
             None => return Err(GenError::OperationFieldRequired),
         };
         let input_type = match operation.input.as_ref(){
-            Some(v) => Ident::new(&v.to_camel(), Span::call_site()),
+            Some(v) => Ident::new(&v, Span::call_site()),
             None => return Err(GenError::OperationFieldRequired),
         };
 
@@ -592,19 +753,19 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
         
         let (template,_template_in,template_in_namespace,_template_out,template_out_namespace,where_clause) = if operation.output_template && operation.input_template{
             (quote!{<I,O,E>},quote!{<I,E>},quote!{::<I,E>},quote!{<O,E>},quote!{::<O,E>},quote!{
-                where I: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                      O: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                      E: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ErrorElement
+                where I: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                      O: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                      E: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ErrorElement
             })
         }else if operation.input_template{
             (quote!{<I,E>},quote!{<I>},quote!{::<I>},quote!{},quote!{},quote!{
-                where I: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                      E: savon::gen::ErrorElement + savon::gen::FromElement
+                where I: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                      E: savon::r#gen::ErrorElement + savon::r#gen::FromElement
             })
         }else if operation.output_template{
             (quote!{<O,E>},quote!{},quote!{},quote!{<O,E>},quote!{::<O,E>},quote!{
-                where O: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                      E: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ErrorElement
+                where O: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                      E: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ErrorElement
             })
         }else {
             (quote!{},quote!{},quote!{},quote!{},quote!{},quote!{})
@@ -630,9 +791,9 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
             },
             (Some(out), Some(_)) => {
                 let out_name = Ident::new(out, Span::call_site());
-                let err_name = Ident::new(&format!("{}Error", name.to_camel()), Span::call_site());
+                let err_name = Ident::new(&format!("{}Error", name), Span::call_site());
                 let input_name = match operation.input.as_ref() {
-                    Some(v) => Ident::new(&string::to_snake(&format!("_{}", v)), Span::call_site()),
+                    Some(v) => Ident::new(&format!("_{}", v), Span::call_site()),
                     None => return Err(GenError::OperationFieldRequired),
                 };
 
@@ -670,33 +831,43 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
         .iter()
         .map(|(message_name, message)| {
             let mname = Ident::new(message_name, Span::call_site());
-            let iname = Ident::new(&message.part_element, Span::call_site());
             
             let (template,_template_namespace,where_clause) = if message.template{
                 (quote!{<T,E>},quote!{::<T,E>},quote!{
-                    where T: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ToElements,
-                          E: std::fmt::Debug + Default + Clone + PartialEq + savon::gen::FromElement + savon::gen::ErrorElement
+                    where T: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ToElements,
+                          E: std::fmt::Debug + Default + Clone + PartialEq + savon::r#gen::FromElement + savon::r#gen::ErrorElement
                 })
             }else{
                 (quote!{},quote!{},quote!{})
             };
+            if let Some(part_element) = &message.part_element {
+                let iname = Ident::new(part_element, Span::call_site());
 
-            quote! {
-                #[derive(Clone, Debug, Default,PartialEq)]
-                pub struct #mname #template(pub #iname #template) #where_clause;
+                quote! {
+                    #[derive(Clone, Debug, Default,PartialEq)]
+                    #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
+                    pub struct #mname #template(pub #iname #template) #where_clause;
 
-                impl #template savon::gen::ToElements for #mname #template #where_clause{
-                    fn to_elements(&self) -> Vec<xmltree::Element> {
-                        self.0.to_elements()
+                    impl #template savon::r#gen::ToElements for #mname #template #where_clause{
+                        fn to_elements(&self) -> Vec<xmltree::Element> {
+                            self.0.to_elements()
+                        }
+                    }
+
+                    impl #template savon::r#gen::FromElement for #mname #template #where_clause {
+                        fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
+                            #iname::from_element(element).map(#mname)
+                        }
                     }
                 }
-
-                impl #template savon::gen::FromElement for #mname #template #where_clause {
-                    fn from_element(element: &xmltree::Element) -> Result<Self, savon::Error> {
-                        #iname::from_element(element).map(#mname)
-                    }
+            }else{
+                quote! {
+                    #[derive(Clone, Debug, Default,PartialEq)]
+                    #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
+                    pub struct #mname;
                 }
             }
+            
         })
         .collect::<Vec<_>>();
 
@@ -710,6 +881,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
 
         #(#types)*
 
+        #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
         pub struct #service_name {
             pub base_url: String,
             pub cookie: Option<String>,
@@ -760,6 +932,7 @@ pub fn gen(wsdl: &Wsdl) -> Result<TokenStream, GenError> {
 
             Ok(quote! {
                 #[derive(Clone, Debug,PartialEq)]
+                #[allow(non_camel_case_types,non_snake_case,nonstandard_style)]
                 pub enum #op_error {
                     #(#faults)*
                 }

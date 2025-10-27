@@ -10,12 +10,13 @@ use xmltree::Element;
 pub enum WsdlError {
     Parse(xmltree::ParseError),
     ElementNotFound(&'static str),
-    AttributeNotFound(&'static str),
+    AttributeNotFound(String,&'static str),
     MessageNotFound(String),
+    MessageEmpty(String),
     TypeNotFound(String),
     NamespacesNotFound,
     NotAnElement,
-    Empty,
+    Empty(&'static str),
 }
 
 impl From<xmltree::ParseError> for WsdlError {
@@ -35,14 +36,20 @@ pub struct Wsdl {
     pub operations: BTreeMap<String, Operation>,
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq)]
 pub enum SimpleType {
     Base64Binary,
     Boolean,
     String,
     Float,
+    Double,
+    Decimal,
+    UnsignedByte,
+    UnsignedShort,
+    UnsignedInt,
     Int,
     Long,
+    UnsignedLong,
     DateTime,
     Any,
     Complex(QualifiedTypename),
@@ -113,10 +120,10 @@ pub enum Type {
     Import(String),
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, Default)]
 pub struct Message {
-    pub part_name: String,
-    pub part_element: String,
+    pub part_name: Option<String>,
+    pub part_element: Option<String>,
     pub template: bool
 }
 
@@ -153,9 +160,15 @@ fn parse_type_ref(name: &QualifiedTypename) -> SimpleType {
     match name.as_tuple() {
         ("http://www.w3.org/2001/XMLSchema", "boolean") => SimpleType::Boolean,
         ("http://www.w3.org/2001/XMLSchema", "string") => SimpleType::String,
+        ("http://www.w3.org/2001/XMLSchema", "unsignedByte") => SimpleType::UnsignedByte,
+        ("http://www.w3.org/2001/XMLSchema", "unsignedShort") => SimpleType::UnsignedShort,
+        ("http://www.w3.org/2001/XMLSchema", "unsignedInt") => SimpleType::UnsignedInt,
         ("http://www.w3.org/2001/XMLSchema", "int") => SimpleType::Int,
         ("http://www.w3.org/2001/XMLSchema", "long") => SimpleType::Long,
+        ("http://www.w3.org/2001/XMLSchema", "unsignedLong") => SimpleType::UnsignedLong,
         ("http://www.w3.org/2001/XMLSchema", "float") => SimpleType::Float,
+        ("http://www.w3.org/2001/XMLSchema", "double") => SimpleType::Double,
+        ("http://www.w3.org/2001/XMLSchema", "decimal") => SimpleType::Decimal,
         ("http://www.w3.org/2001/XMLSchema", "dateTime") => SimpleType::DateTime,
         ("http://www.w3.org/2001/XMLSchema", "base64Binary") => SimpleType::Base64Binary,
         ("http://www.w3.org/2001/XMLSchema", t) => {
@@ -178,7 +191,7 @@ fn parse_element(
     let field_name = field
         .attributes
         .get("name")
-        .ok_or(WsdlError::AttributeNotFound("name"))?;
+        .ok_or(WsdlError::AttributeNotFound(format!("element name {}", field.name),"name"))?;
     let field_type = field
         .attributes
         .get("type");
@@ -241,7 +254,7 @@ fn parse_element(
 
         let new_type = match inner_type.name.as_str() {
             "complexType" => parse_complex_type(inner_type, target_namespace,types)?,
-            "simpleType" => parse_simple_type(inner_type, target_namespace)?,
+            "simpleType" => parse_simple_type(inner_type, target_namespace,&field_name)?,
             n => unimplemented!("unhandled type {n}"),
         };
         if let Type::Template = new_type {
@@ -252,13 +265,14 @@ fn parse_element(
         types.insert(type_name.clone(), new_type);
         Ok((type_attributes, SimpleType::Complex(type_name)))
     }else{
-        Err(WsdlError::AttributeNotFound("type"))
+        //Err(WsdlError::AttributeNotFound(format!("field name {}", field_name),"type"))
+        Ok((type_attributes,SimpleType::Any))
     }
     
 }
 
 /// Reference: https://learn.microsoft.com/en-us/previous-versions/dotnet/netframework-4.0/ms256050(v=vs.100)
-fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlError> {
+fn parse_simple_type(el: &Element, target_namespace: &str, type_name: &str) -> Result<Type, WsdlError> {
     // Simply type inner may only be one of:
     // - restriction
     // - list
@@ -281,10 +295,10 @@ fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlE
                 match child.name.as_str() {
                     "pattern" => pattern_values.push(child.attributes
                                         .get("value")
-                                        .ok_or(WsdlError::AttributeNotFound("value"))?.clone()),
+                                        .ok_or(WsdlError::AttributeNotFound(format!("type name {}", type_name),"restriction.pattern.value"))?.clone()),
                     "enumeration" => enum_values.push(child.attributes
                                         .get("value")
-                                        .ok_or(WsdlError::AttributeNotFound("value"))?.clone()),
+                                        .ok_or(WsdlError::AttributeNotFound(format!("type name {}", type_name),"restriction.enumeration.value"))?.clone()),
                     _ => ()
                 }
             }
@@ -292,7 +306,7 @@ fn parse_simple_type(el: &Element, target_namespace: &str) -> Result<Type, WsdlE
             let base_type = inner
                 .attributes
                 .get("base")
-                .ok_or(WsdlError::AttributeNotFound("base"))?;
+                .ok_or(WsdlError::AttributeNotFound(format!("type name {}", type_name),"restriction.base"))?;
             //TODO: add string restricted for pattern
             if enum_values.is_empty(){
                 Type::Simple(parse_type_ref(&qualified_type(
@@ -386,12 +400,13 @@ fn parse_schema(
         let inner_type = match elem.name.as_str() {
             // sometimes we have <element name="TypeName"><complexType>...</complexType></element>,
             // sometimes we have <complexType name="TypeName">...</complexType>
-            "element" => elem
-                .children
-                .get(0)
-                .ok_or(WsdlError::Empty)?
-                .as_element()
-                .ok_or(WsdlError::NotAnElement)?,
+            "element" => match elem
+                            .children
+                            .get(0){
+                    Some(v) => v.as_element()
+                            .ok_or(WsdlError::NotAnElement)?,
+                    None => elem,
+                },
             "complexType" => elem,
             "simpleType" => elem,
             // ```
@@ -404,7 +419,7 @@ fn parse_schema(
                 let tns = elem
                     .attributes
                     .get("namespace")
-                    .ok_or(WsdlError::AttributeNotFound("namespace"))?;
+                    .ok_or(WsdlError::AttributeNotFound("schema".to_string(),"import.namespace"))?;
 
                 imports.insert(tns.clone());
                 continue;
@@ -417,11 +432,19 @@ fn parse_schema(
         let name = elem
             .attributes
             .get("name")
-            .ok_or(WsdlError::AttributeNotFound("name"))?;
+            .ok_or(WsdlError::AttributeNotFound(format!("element name {}", elem.name),"name"))?;
 
         let new_type = match inner_type.name.as_str() {
             "complexType" => parse_complex_type(inner_type, target_namespace,&mut types)?,
-            "simpleType" => parse_simple_type(inner_type, target_namespace)?,
+            "simpleType" => parse_simple_type(inner_type, target_namespace,&name)?,
+            "element" => {
+                let (type_attributes, simple_type) = parse_element(inner_type, target_namespace,&mut types)?;
+                if type_attributes.template {
+                    Type::Template
+                }else{
+                    Type::Simple(simple_type)
+                }
+            },
             n => unimplemented!("unhandled type {n}"),
         };
 
@@ -468,7 +491,7 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
         elements
             .attributes
             .get("targetNamespace")
-            .ok_or(WsdlError::AttributeNotFound("targetNamespace"))?
+            .ok_or(WsdlError::AttributeNotFound("schema".to_string(),"targetNamespace"))?
             .to_string(),
     );
 
@@ -489,45 +512,58 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
         let name = message
             .attributes
             .get("name")
-            .ok_or(WsdlError::AttributeNotFound("name"))?;
+            .ok_or(WsdlError::AttributeNotFound(format!("element name {}", message.name),"name"))?;
 
-        let c = message
-            .children
-            .iter()
-            .filter_map(|c| c.as_element())
-            .next()
-            .unwrap();
-        //FIXME: namespace
-        let namespaces = c.namespaces.as_ref().ok_or(WsdlError::NamespacesNotFound)?;
+        if let Some(c) = message
+                .children
+                .iter()
+                .filter_map(|c| c.as_element())
+                .next() {
+            //FIXME: namespace
+            let namespaces: &xmltree::Namespace = c.namespaces.as_ref().ok_or(WsdlError::NamespacesNotFound)?;
 
-        let part_name = c
-            .attributes
-            .get("name")
-            .ok_or(WsdlError::AttributeNotFound("name"))?
-            .to_string();
-        let el_attr = c.attributes
-            .get("element")
-            .ok_or(WsdlError::AttributeNotFound("element"))?;
-        let (_,part_element) = split_namespace(el_attr);
-        let part_element = part_element.to_string();
-        let qt = qualified_type(el_attr,namespaces,default_ns);
-        log::debug!("warn:cargo=types: {:?}",types);
+            let part_name = c
+                .attributes
+                .get("name")
+                .ok_or(WsdlError::AttributeNotFound(format!("element name {}", c.name),"name"))?
+                .to_string();
+            if let Some(el_attr) = c.attributes
+                        .get("element") {
+                let (_,part_element) = split_namespace(el_attr);
+                let part_element = part_element.to_string();
+                let qt = qualified_type(el_attr,namespaces,default_ns);
+                //log::debug!("warn:cargo=types: {:?}",types);
 
-        let t = types.get(&qt)
-            .ok_or(WsdlError::TypeNotFound(el_attr.to_string()))?;
-        let mut template = false;
-        if let Type::Complex(c) = t{
-            template = c.template;
+                let t = types.get(&qt)
+                    .ok_or(WsdlError::TypeNotFound(el_attr.to_string()))?;
+                
+            
+                let mut template = false;
+                if let Type::Complex(c) = t{
+                    template = c.template;
+                }
+
+                messages.insert(
+                    name.to_string(),
+                    Message {
+                        part_name: Some(part_name),
+                        part_element: Some(part_element),
+                        template
+                    },
+                );
+            }else if let Some(el_attr) = c.attributes
+                        .get("type"){
+                //return Err(WsdlError::AttributeNotFound(format!("type name {}", part_name),"message.element"));
+                () // ignoring type-based messages for now
+            }else{
+                return Err(WsdlError::AttributeNotFound(format!("type name {}", part_name),"message.element"));
+            };
+        }else {
+            messages.insert(
+                name.to_string(),
+                Message::default(),
+            );
         }
-
-        messages.insert(
-            name.to_string(),
-            Message {
-                part_name,
-                part_element,
-                template
-            },
-        );
     }
 
     let port_type_el = elements
@@ -538,7 +574,7 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
         let operation_name = operation
             .attributes
             .get("name")
-            .ok_or(WsdlError::AttributeNotFound("name"))?;
+            .ok_or(WsdlError::AttributeNotFound(format!("element name {}", operation.name),"name"))?;
 
         let mut input = None;
         let mut output = None;
@@ -555,7 +591,7 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
             let msg_attr = child
                 .attributes
                 .get("message")
-                .ok_or(WsdlError::AttributeNotFound("message"))?;
+                .ok_or(WsdlError::AttributeNotFound(format!("operation name {}", operation_name),"operation.message"))?;
             let (_,message) = split_namespace(msg_attr);
 
             // FIXME: not testing for unicity
@@ -610,7 +646,7 @@ pub fn parse(bytes: &[u8]) -> Result<Wsdl, WsdlError> {
         .ok_or(WsdlError::ElementNotFound("service"))?
         .attributes
         .get("name")
-        .ok_or(WsdlError::AttributeNotFound("name"))?;
+        .ok_or(WsdlError::AttributeNotFound(format!("element name {}", "service"),"name"))?;
 
     debug!("service name: {}", service_name);
     debug!("parsed types: {:#?}", types);
