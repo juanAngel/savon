@@ -3,6 +3,7 @@ use crate::wsdl::{parse, Occurence, QualifiedTypename, SimpleType, Type, Wsdl};
 use case::CaseExt;
 use proc_macro2::{Ident, Literal, Span, TokenStream};
 use quote::ToTokens;
+use std::fmt::Debug;
 use std::{fs::File, io::Write};
 
 pub trait ToElements {
@@ -38,6 +39,13 @@ impl<T: ToElements> ToElements for Option<T> {
         }
     }
 }*/
+#[derive(Debug, Clone, PartialEq)]
+pub struct AnyType(pub xmltree::Element);
+impl std::fmt::Display for AnyType {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        self.0.fmt(f)
+    }
+}
 
 #[derive(Debug)]
 pub enum GenError {
@@ -71,7 +79,7 @@ fn gen_simple(ty: &SimpleType) -> TokenStream {
         SimpleType::Base64Binary => Ident::new("String", Span::call_site()).to_token_stream(), // TODO: Base64 type...
         SimpleType::Any => {
             //let type_name = Ident::new("Element", Span::call_site());
-            quote! { () }
+            quote! { savon::r#gen::AnyType }
         }, // TODO: Any type...
         SimpleType::Complex(n) => Ident::new(&n.name(), Span::call_site()).to_token_stream(),
     }
@@ -529,7 +537,7 @@ fn gen_type(name: &QualifiedTypename, t: &Type) -> TokenStream {
                         }
                     },
                     SimpleType::Any => {
-                        let ft = quote! { () };
+                        let ft = quote! { savon::r#gen::AnyType(#prefix?.clone()) };
                         if attributes.min_occurs.as_ref().is_some_and(|v| match v {
                                         Occurence::Unbounded => true,
                                         Occurence::Num(v) => *v>1
