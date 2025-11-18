@@ -20,7 +20,7 @@ fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::Token
                         let mut args = v.args.iter();
                         if let Some(GenericArgument::Type(v)) = args.next(){
                             let type_ident = quote!{#v};
-                            println!("cargo:warn= type_ident {:?}",type_ident.to_string());
+                            //println!("cargo:warn= type_ident {:?}",type_ident.to_string());
 
                             if let syn::Type::Path(p) = v{
                                 let segment = p.path.segments.last()
