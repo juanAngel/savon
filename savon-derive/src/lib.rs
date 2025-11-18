@@ -8,9 +8,10 @@ fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::Token
             .ok_or(Error::new(type_ident.span(), "type empty"))?;
         match segment.ident.to_string().as_str() {
             "String" => {
+                //let type_name = type_ident.to_string();
                 quote!{
                     .map(|v|v.to_string())
-                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty))?
+                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty(#field_name)))?
                 }
             },
             "Option" => {
@@ -51,7 +52,7 @@ fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::Token
             _ => {
                 quote!{
                     .map(|v|v.parse::<#type_ident>().map_err(|e|savon::Error::ParseError(e.to_string())))
-                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty))??
+                    .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty(#field_name)))??
                 }
             }
         }
