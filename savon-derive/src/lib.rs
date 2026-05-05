@@ -34,7 +34,7 @@ fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::Token
                                         quote!{
                                             .map(|v|v.parse::<#type_ident>()
                                                 .map(|v|Some(v))
-                                                .map_err(|e|savon::Error::ParseError(e.to_string())))
+                                                .map_err(|e|savon::Error::ParseError(format!("{}: {}", #field_name, e))))
                                             .unwrap_or(Ok(None))?
                                         }
                                     }
@@ -51,7 +51,7 @@ fn parse_type(field_name:&str,type_ident:syn::Type) -> Result<proc_macro2::Token
             },
             _ => {
                 quote!{
-                    .map(|v|v.parse::<#type_ident>().map_err(|e|savon::Error::ParseError(e.to_string())))
+                    .map(|v|v.parse::<#type_ident>().map_err(|e|savon::Error::ParseError(format!("{}: {}", #field_name, e))))
                     .ok_or(savon::Error::Wsdl(savon::wsdl::WsdlError::Empty(#field_name)))??
                 }
             }

@@ -88,20 +88,27 @@ pub fn from_template<T,E>(element: &xmltree::Element) -> Result<(Option<E>,Optio
         where T: crate::r#gen::FromElement + Clone,
               E: crate::r#gen::ErrorElement + crate::r#gen::FromElement
     {
+    fn find_child_by_local_name<'a>(parent: &'a xmltree::Element, local_name: &str) -> Option<&'a xmltree::Element> {
+        parent
+            .children
+            .iter()
+            .filter_map(|n| n.as_element())
+            .find(|e| e.name == local_name || e.name.ends_with(&format!(":{local_name}")))
+    }
 
-    let _schema = element.get_child("schema");
-    let diffgram = element.get_child("diffgram").ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
-    let doc = diffgram.get_child("DocumentElement").ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
-    let doc_child = doc.children.iter();
+    let _schema = find_child_by_local_name(element, "schema");
+    let diffgram = find_child_by_local_name(element, "diffgram")
+        .ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
+    let doc = find_child_by_local_name(diffgram, "DocumentElement")
+        .ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
 
 
 
-    if let Some(e) = doc.get_child(E::name()){
+    if let Some(e) = find_child_by_local_name(doc, &E::name()){
         Ok((Some(E::from_element(e)?),None))
     }else{
         let mut result = vec![];
-        for it in doc_child{
-            let el = it.as_element().ok_or(crate::Error::Wsdl(crate::wsdl::WsdlError::NotAnElement))?;
+        for el in doc.children.iter().filter_map(|n| n.as_element()) {
             result.push(T::from_element(el)?);
         }
         Ok((None,Some(result)))
